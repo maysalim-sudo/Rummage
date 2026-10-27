@@ -1,0 +1,443 @@
+mod config;
+mod db;
+mod media_kind;
+mod paths;
+mod query;
+mod scanner;
+mod volumes;
+
+use rusqlite::{params, Connection, OptionalExtension};
+use serde::Serialize;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
+use tauri::{AppHandle, Emitter, State};
+use tauri_plugin_opener::OpenerExt;
+
+type CmdResult<T> = Result<T, String>;
+
+fn err(e: impl std::fmt::Display) -> String {
+    format!("{e:#}")
+}
+
+struct Catalog {
+    dir: PathBuf,
+    conn: Connection,
+}
+
+#[derive(Default)]
+struct AppState {
+    catalog: Mutex<Option<Catalog>>,
+    /// Cancel flags of running scans, by volume id.
+    scans: Mutex<HashMap<i64, Arc<AtomicBool>>>,
+    /// Where each catalogued volume is mounted right now (refreshed by `list_volumes`).
+    mounts: Mutex<HashMap<i64, PathBuf>>,
+}
+
+impl AppState {
+    fn load() -> Self {
+        let state = Self::default();
+        if let Some(dir) = config::load().catalog_dir {
+            match db::open(&dir) {
+                Ok(conn) => *state.catalog.lock().unwrap() = Some(Catalog { dir, conn }),
+                Err(e) => eprintln!("cannot open catalog: {e:#}"),
+            }
+        }
+        state
+    }
+
+    fn catalog(&self) -> CmdResult<MutexGuard<'_, Option<Catalog>>> {
+        let guard = self.catalog.lock().map_err(err)?;
+        if guard.is_none() {
+            return Err("catalog location is not set up yet".into());
+        }
+        Ok(guard)
+    }
+}
+
+// ---------- setup ----------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SetupInfo {
+    catalog_dir: Option<String>,
+    default_dir: String,
+    default_free_bytes: Option<u64>,
+}
+
+#[tauri::command]
+fn get_setup(state: State<AppState>) -> SetupInfo {
+    let default_dir = config::default_catalog_dir();
+    let catalog_dir = state
+        .catalog
+        .lock()
+        .ok()
+        .and_then(|c| c.as_ref().map(|c| c.dir.to_string_lossy().to_string()));
+    SetupInfo {
+        catalog_dir,
+        default_free_bytes: free_space(default_dir.to_string_lossy().to_string()),
+        default_dir: default_dir.to_string_lossy().to_string(),
+    }
+}
+
+#[tauri::command]
+fn free_space(path: String) -> Option<u64> {
+    // The folder may not exist yet; measure the nearest existing ancestor.
+    let mut path = PathBuf::from(path);
+    while !path.exists() && path.pop() {}
+    volumes::free_space_for(&path)
+}
+
+#[tauri::command]
+fn set_catalog_dir(state: State<AppState>, path: String) -> CmdResult<()> {
+    let dir = PathBuf::from(path);
+    let conn = db::open(&dir).map_err(err)?;
+    config::save(&config::Config { catalog_dir: Some(dir.clone()) }).map_err(err)?;
+    *state.catalog.lock().map_err(err)? = Some(Catalog { dir, conn });
+    Ok(())
+}
+
+// ---------- volumes ----------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VolumeView {
+    /// None for a detected drive that is not in the catalog yet.
+    id: Option<i64>,
+    label: String,
+    mount: Option<String>,
+    online: bool,
+    fs_type: String,
+    total_bytes: u64,
+    free_bytes: u64,
+    rotational: bool,
+    file_count: i64,
+    last_scan_at: Option<i64>,
+    scanning: bool,
+    roots: Vec<String>,
+}
+
+#[tauri::command]
+fn list_volumes(state: State<AppState>) -> CmdResult<Vec<VolumeView>> {
+    let detected = volumes::detect();
+    let guard = state.catalog()?;
+    let conn = &guard.as_ref().unwrap().conn;
+    let scanning: Vec<i64> = state.scans.lock().map_err(err)?.keys().copied().collect();
+
+    let counts: HashMap<i64, i64> = conn
+        .prepare("SELECT volume_id, COUNT(*) FROM files WHERE missing = 0 GROUP BY volume_id")
+        .and_then(|mut s| s.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect())
+        .map_err(err)?;
+
+    struct Row {
+        id: i64,
+        uuid: String,
+        label: String,
+        fs_type: String,
+        last_mount: Option<String>,
+        total: i64,
+        free: i64,
+        rotational: bool,
+        last_scan_at: Option<i64>,
+    }
+    let rows: Vec<Row> = conn
+        .prepare(
+            "SELECT id, uuid, label, fs_type, last_mount, total_bytes, free_bytes, rotational, last_scan_at
+             FROM volumes ORDER BY label COLLATE NOCASE",
+        )
+        .and_then(|mut s| {
+            s.query_map([], |r| {
+                Ok(Row {
+                    id: r.get(0)?,
+                    uuid: r.get(1)?,
+                    label: r.get(2)?,
+                    fs_type: r.get(3)?,
+                    last_mount: r.get(4)?,
+                    total: r.get(5)?,
+                    free: r.get(6)?,
+                    rotational: r.get::<_, i64>(7)? != 0,
+                    last_scan_at: r.get(8)?,
+                })
+            })?
+            .collect()
+        })
+        .map_err(err)?;
+
+    let mut mounts = HashMap::new();
+    let mut views = Vec::new();
+    for row in &rows {
+        let live = detected.iter().find(|d| d.uuid.as_deref() == Some(row.uuid.as_str()));
+        if let Some(d) = live {
+            mounts.insert(row.id, d.mount.clone());
+            conn.execute(
+                "UPDATE volumes SET last_mount = ?2, fs_type = ?3, total_bytes = ?4, free_bytes = ?5,
+                        rotational = ?6, last_seen_at = ?7 WHERE id = ?1",
+                params![
+                    row.id,
+                    d.mount.to_string_lossy(),
+                    d.fs_type,
+                    d.total_bytes as i64,
+                    d.free_bytes as i64,
+                    d.rotational,
+                    db::now()
+                ],
+            )
+            .map_err(err)?;
+        }
+        views.push(VolumeView {
+            id: Some(row.id),
+            label: row.label.clone(),
+            mount: live.map(|d| d.mount.to_string_lossy().to_string()).or(row.last_mount.clone()),
+            online: live.is_some(),
+            fs_type: live.map(|d| d.fs_type.clone()).unwrap_or(row.fs_type.clone()),
+            total_bytes: live.map(|d| d.total_bytes).unwrap_or(row.total as u64),
+            free_bytes: live.map(|d| d.free_bytes).unwrap_or(row.free as u64),
+            rotational: live.map(|d| d.rotational).unwrap_or(row.rotational),
+            file_count: counts.get(&row.id).copied().unwrap_or(0),
+            last_scan_at: row.last_scan_at,
+            scanning: scanning.contains(&row.id),
+            roots: scan_roots(conn, row.id).map_err(err)?,
+        });
+    }
+    *state.mounts.lock().map_err(err)? = mounts;
+
+    for d in detected {
+        let known = d.uuid.as_ref().is_some_and(|u| rows.iter().any(|r| &r.uuid == u));
+        if !known {
+            views.push(VolumeView {
+                id: None,
+                label: d.label,
+                mount: Some(d.mount.to_string_lossy().to_string()),
+                online: true,
+                fs_type: d.fs_type,
+                total_bytes: d.total_bytes,
+                free_bytes: d.free_bytes,
+                rotational: d.rotational,
+                file_count: 0,
+                last_scan_at: None,
+                scanning: false,
+                roots: Vec::new(),
+            });
+        }
+    }
+    Ok(views)
+}
+
+fn scan_roots(conn: &Connection, volume_id: i64) -> rusqlite::Result<Vec<String>> {
+    conn.prepare("SELECT rel_path FROM scan_roots WHERE volume_id = ?1 ORDER BY rel_path")?
+        .query_map([volume_id], |r| r.get(0))?
+        .collect()
+}
+
+/// Adds the drive mounted at `mount` to the catalog and returns its id.
+#[tauri::command]
+fn add_volume(state: State<AppState>, mount: String) -> CmdResult<i64> {
+    let mount = PathBuf::from(mount);
+    let detected = volumes::detect()
+        .into_iter()
+        .find(|d| d.mount == mount)
+        .ok_or("that drive is no longer mounted")?;
+
+    let uuid = match &detected.uuid {
+        Some(uuid) => {
+            // Best effort: the marker lets Windows recognise the drive by the same id.
+            if volumes::read_marker(&mount).is_none() {
+                let _ = volumes::write_marker(&mount, uuid);
+            }
+            uuid.clone()
+        }
+        None => {
+            let uuid = uuid::Uuid::new_v4().to_string();
+            volumes::write_marker(&mount, &uuid).map_err(err)?;
+            uuid
+        }
+    };
+
+    // On the system drive, scan only the home folder by default.
+    let root = dirs::home_dir()
+        .filter(|home| home.starts_with(&mount) && home != &mount)
+        .and_then(|home| paths::to_rel(&mount, &home))
+        .unwrap_or_default();
+
+    let guard = state.catalog()?;
+    let conn = &guard.as_ref().unwrap().conn;
+    conn.execute(
+        "INSERT INTO volumes (uuid, label, fs_type, last_mount, total_bytes, free_bytes, rotational, added_at, last_seen_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+        params![
+            uuid,
+            detected.label,
+            detected.fs_type,
+            mount.to_string_lossy(),
+            detected.total_bytes as i64,
+            detected.free_bytes as i64,
+            detected.rotational,
+            db::now()
+        ],
+    )
+    .map_err(err)?;
+    let id = conn.last_insert_rowid();
+    conn.execute("INSERT INTO scan_roots (volume_id, rel_path) VALUES (?1, ?2)", params![id, root])
+        .map_err(err)?;
+    state.mounts.lock().map_err(err)?.insert(id, mount);
+    Ok(id)
+}
+
+/// Forgets a drive and everything catalogued on it. Files on the drive are untouched.
+#[tauri::command]
+fn remove_volume(state: State<AppState>, id: i64) -> CmdResult<()> {
+    if let Some(cancel) = state.scans.lock().map_err(err)?.get(&id) {
+        cancel.store(true, Ordering::Relaxed);
+    }
+    let guard = state.catalog()?;
+    guard.as_ref().unwrap().conn.execute("DELETE FROM volumes WHERE id = ?1", [id]).map_err(err)?;
+    state.mounts.lock().map_err(err)?.remove(&id);
+    Ok(())
+}
+
+// ---------- scanning ----------
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ScanProgress {
+    volume_id: i64,
+    stats: scanner::ScanStats,
+    current_dir: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ScanFinished {
+    volume_id: i64,
+    status: Option<scanner::ScanStatus>,
+    stats: Option<scanner::ScanStats>,
+    error: Option<String>,
+}
+
+#[tauri::command]
+fn start_scan(app: AppHandle, state: State<AppState>, id: i64) -> CmdResult<()> {
+    let mount = state
+        .mounts
+        .lock()
+        .map_err(err)?
+        .get(&id)
+        .cloned()
+        .ok_or("drive is not plugged in")?;
+    let (catalog_dir, roots, rotational) = {
+        let guard = state.catalog()?;
+        let catalog = guard.as_ref().unwrap();
+        let rotational: bool = catalog
+            .conn
+            .query_row("SELECT rotational FROM volumes WHERE id = ?1", [id], |r| r.get(0))
+            .optional()
+            .map_err(err)?
+            .ok_or("unknown drive")?;
+        (catalog.dir.clone(), scan_roots(&catalog.conn, id).map_err(err)?, rotational)
+    };
+
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut scans = state.scans.lock().map_err(err)?;
+        if scans.contains_key(&id) {
+            return Err("this drive is already being scanned".into());
+        }
+        scans.insert(id, cancel.clone());
+    }
+
+    std::thread::spawn(move || {
+        let result = db::open(&catalog_dir).and_then(|mut conn| {
+            scanner::scan_volume(&mut conn, id, &mount, &roots, rotational, &cancel, |stats, dir| {
+                let _ = app.emit(
+                    "scan-progress",
+                    ScanProgress { volume_id: id, stats: stats.clone(), current_dir: dir.to_string() },
+                );
+            })
+        });
+        let finished = match result {
+            Ok((status, stats)) => ScanFinished { volume_id: id, status: Some(status), stats: Some(stats), error: None },
+            Err(e) => ScanFinished { volume_id: id, status: None, stats: None, error: Some(err(e)) },
+        };
+        let state = tauri::Manager::state::<AppState>(&app);
+        if let Ok(mut scans) = state.scans.lock() {
+            scans.remove(&id);
+        }
+        let _ = app.emit("scan-finished", finished);
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn cancel_scan(state: State<AppState>, id: i64) -> CmdResult<()> {
+    if let Some(cancel) = state.scans.lock().map_err(err)?.get(&id) {
+        cancel.store(true, Ordering::Relaxed);
+    }
+    Ok(())
+}
+
+// ---------- files ----------
+
+#[tauri::command]
+fn query_files(state: State<AppState>, query: query::FileQuery, offset: i64, limit: i64) -> CmdResult<query::Page> {
+    let mut page = {
+        let guard = state.catalog()?;
+        query::query(&guard.as_ref().unwrap().conn, &query, offset, limit.clamp(1, 1000)).map_err(err)?
+    };
+    let mounts = state.mounts.lock().map_err(err)?;
+    for row in &mut page.rows {
+        if let Some(mount) = mounts.get(&row.volume_id) {
+            row.abs_path = Some(paths::from_rel(mount, &row.rel_path).to_string_lossy().to_string());
+        }
+    }
+    Ok(page)
+}
+
+fn file_path(state: &AppState, id: i64) -> CmdResult<PathBuf> {
+    let (volume_id, rel): (i64, String) = {
+        let guard = state.catalog()?;
+        guard
+            .as_ref()
+            .unwrap()
+            .conn
+            .query_row("SELECT volume_id, rel_path FROM files WHERE id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(err)?
+    };
+    let mounts = state.mounts.lock().map_err(err)?;
+    let mount: &Path = mounts.get(&volume_id).ok_or("the drive holding this file is not plugged in")?;
+    Ok(paths::from_rel(mount, &rel))
+}
+
+#[tauri::command]
+fn open_file(app: AppHandle, state: State<AppState>, id: i64) -> CmdResult<()> {
+    let path = file_path(&state, id)?;
+    app.opener().open_path(path.to_string_lossy(), None::<&str>).map_err(err)
+}
+
+#[tauri::command]
+fn reveal_file(app: AppHandle, state: State<AppState>, id: i64) -> CmdResult<()> {
+    let path = file_path(&state, id)?;
+    app.opener().reveal_item_in_dir(path).map_err(err)
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .manage(AppState::load())
+        .invoke_handler(tauri::generate_handler![
+            get_setup,
+            free_space,
+            set_catalog_dir,
+            list_volumes,
+            add_volume,
+            remove_volume,
+            start_scan,
+            cancel_scan,
+            query_files,
+            open_file,
+            reveal_file,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running Media Catalog");
+}
