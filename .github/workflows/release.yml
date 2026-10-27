@@ -1,0 +1,90 @@
+name: Release
+
+# Pushing a version tag (v0.1.0, …) builds Rummage for Linux (AppImage + .deb) and
+# Windows (installer) into a draft GitHub release, with the signed files and latest.json
+# the auto-updater reads. Publishing the draft is what makes the update live.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.release.outputs.id }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the tag matches the app version
+        run: |
+          version="$(jq -r .version src-tauri/tauri.conf.json)"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME doesn't match version $version in tauri.conf.json" >&2
+            exit 1
+          fi
+      - id: release
+        name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
+            --title "Rummage ${GITHUB_REF_NAME#v}" \
+            --notes "Download the AppImage or .deb for Linux, or the setup .exe for Windows."
+          id="$(gh api "repos/$GITHUB_REPOSITORY/releases" --jq ".[] | select(.tag_name == \"$GITHUB_REF_NAME\") | .id")"
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The oldest supported Ubuntu, so the AppImage runs on older distros too.
+          - os: ubuntu-22.04
+            fetch: bash scripts/fetch-tools.sh
+            config: src-tauri/tauri.release.linux.json
+          - os: windows-latest
+            fetch: pwsh scripts/fetch-tools.ps1
+            config: src-tauri/tauri.release.windows.json
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Download the bundled tools (ffmpeg, ImageMagick)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ${{ matrix.fetch }}
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+          tauriScript: pnpm tauri
+          args: --config ${{ matrix.config }}

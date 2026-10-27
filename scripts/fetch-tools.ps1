@@ -18,13 +18,19 @@ foreach ($exe in "ffmpeg.exe", "ffprobe.exe") {
 New-Item -ItemType Directory -Force "$dest\licenses" | Out-Null
 Get-ChildItem "$tmp\ffmpeg" -Recurse -Filter "LICENSE*" | Select-Object -First 1 | Copy-Item -Destination "$dest\licenses\ffmpeg-LICENSE.txt"
 
-Write-Host "Downloading ImageMagick (portable)..."
-$base = "https://imagemagick.org/archive/binaries/"
-$zip = (Invoke-WebRequest $base -UseBasicParsing).Links.href |
-    Where-Object { $_ -match "portable-Q16-HDRI-x64\.zip$" } | Select-Object -Last 1
-if (-not $zip) { throw "No portable ImageMagick build found at $base" }
-Invoke-WebRequest "$base$zip" -OutFile "$tmp\magick.zip"
-Expand-Archive "$tmp\magick.zip" "$tmp\magick"
+Write-Host "Downloading ImageMagick (portable, from its latest GitHub release)..."
+$headers = @{}
+if ($env:GITHUB_TOKEN) { $headers.Authorization = "Bearer $env:GITHUB_TOKEN" }
+$release = Invoke-RestMethod "https://api.github.com/repos/ImageMagick/ImageMagick/releases/latest" -Headers $headers
+$asset = $release.assets | Where-Object { $_.name -match "portable-Q16-HDRI-x64\.7z$" } | Select-Object -First 1
+if (-not $asset) { throw "No portable ImageMagick build in release $($release.tag_name)" }
+Write-Host "  $($asset.browser_download_url)"
+Invoke-WebRequest $asset.browser_download_url -OutFile "$tmp\magick.7z"
+New-Item -ItemType Directory -Force "$tmp\magick" | Out-Null
+# 7-Zip when installed (GitHub runners have it), else the tar.exe built into Windows 10+.
+if (Get-Command 7z -ErrorAction SilentlyContinue) { 7z x "$tmp\magick.7z" "-o$tmp\magick" -y | Out-Null }
+else { tar -xf "$tmp\magick.7z" -C "$tmp\magick" }
+if ($LASTEXITCODE) { throw "Cannot extract $tmp\magick.7z" }
 # The archive may or may not have a top-level folder; keep the folder holding magick.exe.
 $exe = Get-ChildItem "$tmp\magick" -Recurse -Filter "magick.exe" | Select-Object -First 1
 Move-Item $exe.Directory.FullName "$dest\magick"
