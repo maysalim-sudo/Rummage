@@ -43,13 +43,12 @@ Needed in Squeue first: the Linux port, phases 1–2 (Core + `squeue` CLI; plan 
 
 ## Release setup — in progress (branch `rename-and-duplicates`)
 
-Done: updater plugin + "update available" banner, signing key pair (`~/.tauri/rummage.key`, never committed — back it up; without it no further updates can be signed), `tauri.release.linux.json` / `tauri.release.windows.json` (bundle `tools/` as resources), bundled-tool lookup in `tools.rs`, `scripts/fetch-tools.sh` / `.ps1`. Local Linux build works: `pnpm tauri build --config src-tauri/tauri.release.linux.json` (with `TAURI_SIGNING_PRIVATE_KEY` set from the key file) → AppImage (~270 MB, GStreamer bundled) and `.deb` in `~/.cache/media-catalog-target/release/bundle/`.
+Done: updater plugin + "update available" banner, signing key pair (`~/.tauri/rummage.key`, never committed — back it up; without it no further updates can be signed), `tauri.release.linux.json` / `tauri.release.windows.json` (bundle `tools/` as resources), bundled-tool lookup in `tools.rs`, `scripts/fetch-tools.sh` / `.ps1`. Local Linux build works: `pnpm tauri build --config src-tauri/tauri.release.linux.json` (with `TAURI_SIGNING_PRIVATE_KEY` set from the key file) → AppImage (~270 MB, GStreamer bundled; tested by the user 2026-10-28: video player, thumbnails, previews work) and `.deb` in `~/.cache/media-catalog-target/release/bundle/`.
 
 Linux ImageMagick notes: `fetch-tools.sh` takes the AppImage from ImageMagick's latest GitHub release and packs it as `tools/magick.tar.gz`; the app unpacks it to `~/.cache/rummage/tools/magick-<version>` on first use. Left unpacked, the AppImage packager copied ImageMagick's own older libraries (glib…) over the app's and it crashed at startup (`undefined symbol: g_dir_unref`). An installed `magick` on the PATH is preferred over the bundled one: the official Linux build has libheif 1.12, which fails on recent iPhone HEICs ("Too many auxiliary image references").
 
 Left:
 1. Verify `fetch-tools.ps1` on Windows.
-2. In the AppImage, check the in-panel video player (GStreamer is now bundled) and a video thumbnail by hand; only startup, SVG/PSD rendering and the tool lookup were checked so far.
-3. `.github/workflows/release.yml` (tauri-action, ubuntu + windows matrix, tag `v*`), CI test workflow.
-4. With the user's OK: choose a license, push to GitHub, add `TAURI_SIGNING_PRIVATE_KEY` (+ empty password) as repo secrets, tag `v0.1.0`.
-5. Publish the landing page (`site/`) together with that release: enable GitHub Pages (source: GitHub Actions) so `pages.yml` deploys it. Kept local until then.
+2. `.github/workflows/release.yml` (tauri-action, ubuntu + windows matrix, tag `v*`), CI test workflow.
+3. With the user's OK: choose a license, push to GitHub, add `TAURI_SIGNING_PRIVATE_KEY` (+ empty password) as repo secrets, tag `v0.1.0`.
+4. Publish the landing page (`site/`) together with that release: enable GitHub Pages (source: GitHub Actions) so `pages.yml` deploys it. Kept local until then.
