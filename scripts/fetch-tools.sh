@@ -19,13 +19,21 @@ mkdir -p "$dest/licenses"
 cp "$ff_dir/GPLv3.txt" "$dest/licenses/ffmpeg-GPLv3.txt" 2>/dev/null || true
 cp "$ff_dir/readme.txt" "$dest/licenses/ffmpeg-readme.txt" 2>/dev/null || true
 
-echo "Downloading ImageMagick (official AppImage)…"
-curl -fsSL https://imagemagick.org/archive/binaries/magick -o "$tmp/magick.AppImage"
+echo "Downloading ImageMagick (official AppImage from its latest GitHub release)…"
+auth=()
+[[ -n "${GITHUB_TOKEN:-}" ]] && auth=(-H "Authorization: Bearer $GITHUB_TOKEN")
+im_url="$(curl -fsSL "${auth[@]}" https://api.github.com/repos/ImageMagick/ImageMagick/releases/latest \
+  | grep -o '"browser_download_url": *"[^"]*-gcc-x86_64\.AppImage"' | head -1 | sed 's/.*"\(https[^"]*\)"/\1/')"
+[[ -n "$im_url" ]] || { echo "No ImageMagick AppImage found in the latest release" >&2; exit 1; }
+echo "  $im_url"
+curl -fsSL "$im_url" -o "$tmp/magick.AppImage"
 chmod +x "$tmp/magick.AppImage"
 (cd "$tmp" && ./magick.AppImage --appimage-extract >/dev/null)
-mv "$tmp/squashfs-root" "$dest/magick"
+"$tmp/squashfs-root/AppRun" -version | head -1
+# Packed so the AppImage packager doesn't copy ImageMagick's own libraries over the app's;
+# the app unpacks it into its cache folder on first use (see src-tauri/src/tools.rs).
+tar -czf "$dest/magick.tar.gz" -C "$tmp/squashfs-root" .
 
-chmod +x "$dest/ffmpeg" "$dest/ffprobe" "$dest/magick/AppRun"
+chmod +x "$dest/ffmpeg" "$dest/ffprobe"
 "$dest/ffmpeg" -version | head -1
-"$dest/magick/AppRun" -version | head -1
 du -sh "$dest"
