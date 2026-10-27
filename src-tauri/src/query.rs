@@ -40,6 +40,22 @@ pub struct FileQuery {
     pub camera: Option<String>,
     pub min_duration_ms: Option<i64>,
     pub max_duration_ms: Option<i64>,
+    /// Volume-relative folder ('' = drive root); only used together with `volume_id`.
+    pub folder: Option<String>,
+    /// Only files directly in `folder`, not in its subfolders.
+    pub direct_only: bool,
+}
+
+/// One subfolder in the folder tree.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Folder {
+    pub name: String,
+    /// Volume-relative path of the folder.
+    pub path: String,
+    /// Media files in this folder and all its subfolders.
+    pub count: i64,
+    pub has_children: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -145,6 +161,20 @@ pub fn query(conn: &Connection, q: &FileQuery, offset: i64, limit: i64) -> Resul
     if let Some(volume_id) = q.volume_id {
         conditions.push("volume_id = ?");
         args.push(volume_id.into());
+        match q.folder.as_deref() {
+            Some(folder) if q.direct_only => {
+                conditions.push("dir = ?");
+                args.push(folder.to_string().into());
+            }
+            Some(folder) if !folder.is_empty() => {
+                // '0' is the character right after '/', so this range is "folder/…" and uses the index.
+                conditions.push("(dir = ? OR (dir >= ? AND dir < ?))");
+                args.push(folder.to_string().into());
+                args.push(format!("{folder}/").into());
+                args.push(format!("{folder}0").into());
+            }
+            _ => {}
+        }
     }
     if let Some(kind) = q.kind {
         conditions.push("kind = ?");
@@ -243,6 +273,47 @@ pub fn details(conn: &Connection, id: i64) -> Result<FileDetails> {
     )?)
 }
 
+/// The direct subfolders of `parent` ('' = drive root) that contain media, with counts.
+pub fn folders(conn: &Connection, volume_id: i64, parent: &str, include_missing: bool) -> Result<Vec<Folder>> {
+    let missing = if include_missing { "" } else { "AND missing = 0" };
+    let (range_sql, args): (&str, Vec<Value>) = if parent.is_empty() {
+        ("", vec![volume_id.into()])
+    } else {
+        (
+            "AND dir >= ?2 AND dir < ?3",
+            vec![volume_id.into(), format!("{parent}/").into(), format!("{parent}0").into()],
+        )
+    };
+    let mut stmt = conn.prepare(&format!(
+        "SELECT dir, COUNT(*) FROM files WHERE volume_id = ?1 {missing} {range_sql} GROUP BY dir"
+    ))?;
+    let dirs = stmt
+        .query_map(params_from_iter(args.iter()), |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    let prefix_len = if parent.is_empty() { 0 } else { parent.len() + 1 };
+    let mut children: std::collections::BTreeMap<String, Folder> = Default::default();
+    for (dir, count) in dirs {
+        let rest = &dir[prefix_len.min(dir.len())..];
+        if rest.is_empty() {
+            continue; // files directly in `parent`
+        }
+        let (name, deeper) = match rest.split_once('/') {
+            Some((name, _)) => (name, true),
+            None => (rest, false),
+        };
+        let child = children.entry(name.to_lowercase() + "\0" + name).or_insert_with(|| Folder {
+            name: name.to_string(),
+            path: if parent.is_empty() { name.to_string() } else { format!("{parent}/{name}") },
+            count: 0,
+            has_children: false,
+        });
+        child.count += count;
+        child.has_children |= deeper;
+    }
+    Ok(children.into_values().collect())
+}
+
 /// Cameras in the catalog, most used first.
 pub fn cameras(conn: &Connection) -> Result<Vec<CameraCount>> {
     let mut stmt = conn.prepare(
@@ -303,6 +374,39 @@ mod tests {
         assert_eq!(search("trips"), 2);
         assert_eq!(search("DSC_0001"), 1);
         assert_eq!(search("\"\""), 3); // only quotes: no text filter
+    }
+
+    #[test]
+    fn folder_tree_and_folder_filter() {
+        let (_d, conn) = catalog();
+        conn.execute_batch(
+            "INSERT INTO files (volume_id, rel_path, dir, name, ext, kind, size, mtime, first_scan, changed_scan, seen_scan) VALUES
+               (1, 'Trips/2024/Rome/a.jpg', 'Trips/2024/Rome', 'a.jpg', 'jpg', 1, 1, 1, 1, 1, 1),
+               (1, 'Trips/2024/b.jpg',      'Trips/2024',      'b.jpg', 'jpg', 1, 1, 1, 1, 1, 1),
+               (1, 'Trips2/c.jpg',          'Trips2',          'c.jpg', 'jpg', 1, 1, 1, 1, 1, 1),
+               (1, 'root.jpg',              '',                'root.jpg', 'jpg', 1, 1, 1, 1, 1, 1),
+               (1, 'archive/x.jpg',         'archive',         'x.jpg', 'jpg', 1, 1, 1, 1, 1, 1);",
+        )
+        .unwrap();
+
+        let top = folders(&conn, 1, "", false).unwrap();
+        let summary: Vec<(&str, i64, bool)> = top.iter().map(|f| (f.name.as_str(), f.count, f.has_children)).collect();
+        // Sorted case-insensitively; Trips holds its 2 own files plus 2 in subfolders.
+        assert_eq!(summary, [("archive", 1, false), ("Trips", 4, true), ("Trips2", 1, false)]);
+
+        let inner = folders(&conn, 1, "Trips", false).unwrap();
+        assert_eq!(inner.len(), 1);
+        assert_eq!((inner[0].path.as_str(), inner[0].count, inner[0].has_children), ("Trips/2024", 2, true));
+
+        let count = |folder: &str, direct_only: bool| {
+            let q = FileQuery { volume_id: Some(1), folder: Some(folder.into()), direct_only, ..Default::default() };
+            query(&conn, &q, 0, 50).unwrap().total
+        };
+        assert_eq!(count("Trips", false), 4); // not Trips2
+        assert_eq!(count("Trips", true), 2);
+        assert_eq!(count("Trips/2024", true), 1);
+        assert_eq!(count("", true), 1); // files at the drive root
+        assert_eq!(count("", false), 7);
     }
 
     #[test]

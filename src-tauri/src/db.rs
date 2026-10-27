@@ -110,6 +110,11 @@ DROP INDEX files_mtime;
 CREATE INDEX files_sort_date ON files(sort_date);
 CREATE INDEX files_kind_date ON files(kind, sort_date);
 CREATE INDEX files_camera ON files(camera) WHERE camera IS NOT NULL;
+"#, r#"
+-- Covering index for the folder tree and folder filter: answering them without
+-- reading table rows matters a lot when the catalog sits on an HDD.
+DROP INDEX files_dir;
+CREATE INDEX files_dir ON files(volume_id, dir, missing);
 "#];
 
 /// Opens (creating if needed) the catalog in `dir` and brings its schema up to date.

@@ -492,6 +492,17 @@ fn file_details(state: State<AppState>, id: i64) -> CmdResult<query::FileDetails
 }
 
 #[tauri::command]
+fn list_folders(
+    state: State<AppState>,
+    volume_id: i64,
+    parent: String,
+    include_missing: bool,
+) -> CmdResult<Vec<query::Folder>> {
+    let guard = state.catalog()?;
+    query::folders(&guard.as_ref().unwrap().conn, volume_id, &parent, include_missing).map_err(err)
+}
+
+#[tauri::command]
 fn list_cameras(state: State<AppState>) -> CmdResult<Vec<query::CameraCount>> {
     let guard = state.catalog()?;
     query::cameras(&guard.as_ref().unwrap().conn).map_err(err)
@@ -596,6 +607,7 @@ pub fn run() {
             set_jobs_paused,
             query_files,
             file_details,
+            list_folders,
             list_cameras,
             open_file,
             reveal_file,

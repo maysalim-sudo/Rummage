@@ -11,18 +11,38 @@
     type Volume,
   } from "./api";
   import { formatBytes, formatCount, formatDate } from "./format";
+  import FolderTree from "./FolderTree.svelte";
 
   let {
     volumes = $bindable([]),
     selected = $bindable(null),
+    folder = $bindable(null),
+    includeMissing,
     onCatalogChanged,
     onError,
   }: {
     volumes?: Volume[];
     selected?: number | null;
+    /** Selected folder on the selected drive ('' = root), or null for the whole drive. */
+    folder?: string | null;
+    includeMissing: boolean;
     onCatalogChanged: () => void;
     onError: (message: string) => void;
   } = $props();
+
+  let expandedDrives = $state<Record<number, boolean>>({});
+  /** Bumped when folder counts change (a scan finished), so open trees reload. */
+  let treeKey = $state(0);
+
+  function selectDrive(id: number | null) {
+    selected = id;
+    folder = null;
+  }
+
+  function selectFolder(volumeId: number, path: string) {
+    selected = volumeId;
+    folder = path;
+  }
 
   let progress = $state<Record<number, ScanProgress>>({});
   let jobs = $state<JobsStatus>({ paused: false, volumes: [] });
@@ -85,6 +105,7 @@
       onScanFinished((f) => {
         delete progress[f.volumeId];
         if (f.error) onError(`Scan failed: ${f.error}`);
+        treeKey++;
         refresh();
         notifyChanged(true);
       }),
@@ -117,7 +138,7 @@
       { title: "Remove drive", kind: "warning" },
     );
     if (!ok) return;
-    if (selected === volume.id) selected = null;
+    if (selected === volume.id) selectDrive(null);
     await run(() => api.removeVolume(volume.id!));
     notifyChanged(true);
   }
@@ -129,7 +150,7 @@
 
 <nav>
   <h2>Drives</h2>
-  <button class="item" class:active={selected === null} onclick={() => (selected = null)}>
+  <button class="item" class:active={selected === null} onclick={() => selectDrive(null)}>
     <span class="name">All drives</span>
   </button>
 
@@ -148,17 +169,39 @@
           />
         </form>
       {:else}
-        <button
-          class="item"
-          class:active={selected === v.id}
-          onclick={() => (selected = v.id)}
-          ondblclick={() => startRename(v)}
-          title={`${v.mount ?? ""} — double-click to rename`}
-        >
-          <span class="dot" class:on={v.online} title={v.online ? "Plugged in" : "Offline"}></span>
-          <span class="name">{v.label}</span>
-          <span class="count">{formatCount(v.fileCount)}</span>
-        </button>
+        <div class="drive-row">
+          <button
+            class="chevron"
+            aria-label={expandedDrives[v.id!] ? `Hide folders of ${v.label}` : `Show folders of ${v.label}`}
+            aria-expanded={!!expandedDrives[v.id!]}
+            onclick={() => (expandedDrives[v.id!] = !expandedDrives[v.id!])}
+            >{expandedDrives[v.id!] ? "▾" : "▸"}</button
+          >
+          <button
+            class="item"
+            class:active={selected === v.id && folder === null}
+            onclick={() => selectDrive(v.id)}
+            ondblclick={() => startRename(v)}
+            title={`${v.mount ?? ""} — double-click to rename`}
+          >
+            <span class="dot" class:on={v.online} title={v.online ? "Plugged in" : "Offline"}></span>
+            <span class="name">{v.label}</span>
+            <span class="count">{formatCount(v.fileCount)}</span>
+          </button>
+        </div>
+      {/if}
+      {#if expandedDrives[v.id!]}
+        <div class="tree">
+          <FolderTree
+            volumeId={v.id!}
+            parent=""
+            depth={0}
+            refreshKey={treeKey}
+            {includeMissing}
+            selectedPath={selected === v.id ? folder : null}
+            onSelect={selectFolder}
+          />
+        </div>
       {/if}
       <div class="details muted">
         {#if v.online}{usage(v)} · {v.fsType}{v.rotational ? " · HDD" : ""}{:else}Offline — plug in to scan or open files{/if}
@@ -304,6 +347,24 @@
   }
   .rename {
     width: 100%;
+  }
+  .drive-row {
+    display: flex;
+    align-items: center;
+  }
+  .drive-row .item {
+    padding-left: 2px;
+  }
+  .chevron {
+    flex: none;
+    width: 18px;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--muted);
+  }
+  .tree {
+    margin: 2px 0 6px 18px;
   }
   .jobs {
     margin-top: 16px;

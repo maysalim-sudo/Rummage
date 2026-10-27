@@ -30,6 +30,8 @@
 
   // Filters
   let selectedVolume = $state<number | null>(null);
+  let selectedFolder = $state<string | null>(null);
+  let includeSubfolders = $state(true);
   let text = $state("");
   let searchText = $state("");
   let kind = $state<MediaKind | null>(null);
@@ -79,7 +81,16 @@
     dateTo: day(dateTo, true),
     minDurationMs: durationRanges[duration][0],
     maxDurationMs: durationRanges[duration][1],
+    folder: selectedVolume !== null ? selectedFolder : null,
+    directOnly: selectedFolder !== null && !includeSubfolders,
   });
+
+  /** Breadcrumb segments for the selected folder: [label, path]. */
+  const crumbs = $derived(
+    selectedFolder
+      ? selectedFolder.split("/").map((name, i, parts) => [name, parts.slice(0, i + 1).join("/")] as const)
+      : [],
+  );
 
   const filtersActive = $derived(
     !!(searchText || kind || minSide || orientation || camera || dateFrom || dateTo || duration || includeMissing),
@@ -184,7 +195,14 @@
 {:else}
   <div class="app" class:with-inspector={selected !== null}>
     <aside>
-      <DriveList bind:volumes bind:selected={selectedVolume} onCatalogChanged={catalogChanged} onError={showError} />
+      <DriveList
+        bind:volumes
+        bind:selected={selectedVolume}
+        bind:folder={selectedFolder}
+        {includeMissing}
+        onCatalogChanged={catalogChanged}
+        onError={showError}
+      />
     </aside>
 
     <main>
@@ -245,6 +263,22 @@
           <button onclick={clearFilters}>Clear filters</button>
         {/if}
       </div>
+
+      {#if selectedVolume !== null && selectedFolder !== null}
+        <nav class="toolbar crumbs" aria-label="Folder">
+          <button class="crumb" onclick={() => (selectedFolder = null)}>{labels.get(selectedVolume) ?? "Drive"}</button>
+          {#each crumbs as [name, path], i (path)}
+            <span class="muted">/</span>
+            {#if i === crumbs.length - 1}
+              <span class="crumb current">{name}</span>
+            {:else}
+              <button class="crumb" onclick={() => (selectedFolder = path)}>{name}</button>
+            {/if}
+          {/each}
+          <label class="subfolders"><input type="checkbox" bind:checked={includeSubfolders} /> Include subfolders</label>
+          <button onclick={() => (selectedFolder = null)} aria-label="Show the whole drive">✕</button>
+        </nav>
+      {/if}
 
       {#if error}
         <div class="error">
@@ -323,6 +357,23 @@
   .count {
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
+  }
+  .crumbs {
+    gap: 4px;
+    padding-top: 0;
+  }
+  .crumb {
+    border: none;
+    background: none;
+    padding: 2px 4px;
+    color: var(--accent);
+  }
+  .crumb.current {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .subfolders {
+    margin-left: auto;
   }
   label {
     display: flex;

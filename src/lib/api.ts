@@ -62,6 +62,18 @@ export interface FileQuery {
   camera?: string | null;
   minDurationMs?: number | null;
   maxDurationMs?: number | null;
+  /** Volume-relative folder ('' = drive root); needs volumeId. */
+  folder?: string | null;
+  /** Only files directly in `folder`, not its subfolders. */
+  directOnly?: boolean;
+}
+
+export interface Folder {
+  name: string;
+  path: string;
+  /** Media files in the folder and all its subfolders. */
+  count: number;
+  hasChildren: boolean;
 }
 
 export interface FileRow {
@@ -137,6 +149,8 @@ export const api = {
   queryFiles: (query: FileQuery, offset: number, limit: number) =>
     invoke<Page>("query_files", { query, offset, limit }),
   fileDetails: (id: number) => invoke<FileDetails>("file_details", { id }),
+  listFolders: (volumeId: number, parent: string, includeMissing: boolean) =>
+    invoke<Folder[]>("list_folders", { volumeId, parent, includeMissing }),
   listCameras: () => invoke<CameraCount[]>("list_cameras"),
   openFile: (id: number) => invoke<void>("open_file", { id }),
   revealFile: (id: number) => invoke<void>("reveal_file", { id }),
