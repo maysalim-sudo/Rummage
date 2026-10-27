@@ -50,3 +50,4 @@ Left:
 2. Local release build: `pnpm tauri build --config src-tauri/tauri.release.linux.json`, then check the AppImage finds the bundled tools.
 3. `.github/workflows/release.yml` (tauri-action, ubuntu + windows matrix, tag `v*`), CI test workflow.
 4. With the user's OK: choose a license, push to GitHub, add `TAURI_SIGNING_PRIVATE_KEY` (+ empty password) as repo secrets, tag `v0.1.0`.
+5. Publish the landing page (`site/`) together with that release: enable GitHub Pages (source: GitHub Actions) so `pages.yml` deploys it. Kept local until then.
