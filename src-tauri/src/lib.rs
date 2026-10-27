@@ -1,5 +1,6 @@
 mod config;
 mod db;
+mod dupes;
 mod jobs;
 mod media_kind;
 mod meta;
@@ -49,6 +50,8 @@ struct AppState {
     jobs: Arc<jobs::Jobs>,
     /// Local HTTP server for the video player; started once at launch.
     media_server: OnceLock<video::MediaServer>,
+    /// Cancel flag of the running duplicate search, if any.
+    dupe_search: Mutex<Option<Arc<AtomicBool>>>,
 }
 
 impl AppState {
@@ -80,17 +83,13 @@ impl AppState {
     }
 }
 
-/// Starts background processing for every plugged-in drive that is not being scanned.
-fn start_jobs(app: &AppHandle) {
-    let state = app.state::<AppState>();
-    let Some(catalog_dir) = state.catalog_dir() else { return };
-    let scanning: Vec<i64> = state.scans.lock().map(|s| s.keys().copied().collect()).unwrap_or_default();
-    let targets: Vec<jobs::Target> = state
+/// The plugged-in catalogued drives.
+fn online_drives(state: &AppState) -> Vec<jobs::Target> {
+    state
         .mounts
         .lock()
         .map(|m| {
             m.iter()
-                .filter(|(id, _)| !scanning.contains(id))
                 .map(|(&volume_id, m)| jobs::Target {
                     volume_id,
                     mount: m.path.clone(),
@@ -99,7 +98,16 @@ fn start_jobs(app: &AppHandle) {
                 })
                 .collect()
         })
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
+
+/// Starts background processing for every plugged-in drive that is not being scanned.
+fn start_jobs(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let Some(catalog_dir) = state.catalog_dir() else { return };
+    let scanning: Vec<i64> = state.scans.lock().map(|s| s.keys().copied().collect()).unwrap_or_default();
+    let targets: Vec<jobs::Target> =
+        online_drives(&state).into_iter().filter(|t| !scanning.contains(&t.volume_id)).collect();
     let handle = app.clone();
     let emit: jobs::Emit = Arc::new(move |status| {
         let _ = handle.emit("jobs-progress", status);
@@ -443,6 +451,81 @@ fn start_scan(app: AppHandle, state: State<AppState>, id: i64) -> CmdResult<()> 
     Ok(())
 }
 
+// ---------- duplicates ----------
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DupesFinished {
+    summary: Option<dupes::Summary>,
+    error: Option<String>,
+    cancelled: bool,
+}
+
+#[tauri::command]
+fn start_dupe_search(app: AppHandle, state: State<AppState>) -> CmdResult<()> {
+    let catalog_dir = state.catalog_dir().ok_or("catalog location is not set up yet")?;
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut running = state.dupe_search.lock().map_err(err)?;
+        if running.is_some() {
+            return Err("a duplicate search is already running".into());
+        }
+        *running = Some(cancel.clone());
+    }
+    let drives = online_drives(&state);
+    std::thread::spawn(move || {
+        let progress = |p: &dupes::Progress| {
+            let _ = app.emit("dupes-progress", p);
+        };
+        let result = dupes::run(&catalog_dir, &drives, &cancel, &progress);
+        let cancelled = cancel.load(Ordering::Relaxed);
+        if let Ok(mut running) = app.state::<AppState>().dupe_search.lock() {
+            *running = None;
+        }
+        let finished = match result {
+            Ok(summary) => DupesFinished { summary: Some(summary), error: None, cancelled },
+            Err(e) => DupesFinished { summary: None, error: Some(err(e)), cancelled },
+        };
+        let _ = app.emit("dupes-finished", finished);
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn cancel_dupe_search(state: State<AppState>) -> CmdResult<()> {
+    if let Some(cancel) = state.dupe_search.lock().map_err(err)?.as_ref() {
+        cancel.store(true, Ordering::Relaxed);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn dupe_summary(state: State<AppState>) -> CmdResult<dupes::Summary> {
+    let guard = state.catalog()?;
+    dupes::summary(&guard.as_ref().unwrap().conn).map_err(err)
+}
+
+#[tauri::command]
+fn dupe_groups(state: State<AppState>, kind: dupes::GroupKind, offset: i64, limit: i64) -> CmdResult<dupes::GroupPage> {
+    let mut page = {
+        let guard = state.catalog()?;
+        dupes::groups(&guard.as_ref().unwrap().conn, kind, offset, limit.clamp(1, 200)).map_err(err)?
+    };
+    let mounts = state.mounts.lock().map_err(err)?;
+    for file in page.groups.iter_mut().flat_map(|g| g.files.iter_mut()) {
+        fill_abs_path(&mounts, file);
+    }
+    Ok(page)
+}
+
+/// Moves the files to the system trash; the report says which were left alone and why.
+#[tauri::command]
+fn trash_files(state: State<AppState>, ids: Vec<i64>) -> CmdResult<dupes::TrashReport> {
+    let resolve = |id: i64| file_path(&state, id).ok();
+    let guard = state.catalog()?;
+    dupes::trash(&guard.as_ref().unwrap().conn, &ids, &resolve).map_err(err)
+}
+
 #[tauri::command]
 fn jobs_status(state: State<AppState>) -> jobs::Status {
     state.jobs.status()
@@ -690,6 +773,11 @@ pub fn run() {
             reveal_file,
             media_server,
             open_in_vlc,
+            start_dupe_search,
+            cancel_dupe_search,
+            dupe_summary,
+            dupe_groups,
+            trash_files,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Rummage");

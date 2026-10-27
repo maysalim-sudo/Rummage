@@ -11,13 +11,13 @@ Last updated 2026-10-27. Architecture and roadmap: [architecture.md](architectur
 | — Folder tree | Expandable tree per drive with counts, breadcrumb, include-subfolders toggle |
 | — Previews & video | ImageMagick for HEIC/PSD/SVG/AVIF/TGA/EXR and AI/EPS/PDF; Figma thumbnails; 1600 px on-demand previews; in-panel video player via a token-protected local HTTP server; Open in VLC |
 | — Filters | Multi-select type / resolution / orientation / camera / length; camera counts follow the other filters |
-| 5. Duplicates | In progress on branch `rename-and-duplicates` |
+| 5. Duplicates | Exact copies (size → quick hash → full BLAKE3, stored in the catalog) and similar photos (thumbnail difference hash, banded search); review screen; move to the system trash with last-copy protection |
 
 Tested on the author's machine: 6 drives (3 physical disks), ~415k files, Kubuntu 26.04, catalog on an HDD.
 
 ## Next
 
-1. **Duplicate finder** (milestone 5): exact copies (size → quick hash → full BLAKE3) and near-duplicate images (perceptual hash of the cached thumbnails).
+1. **Try the duplicate finder on the real catalog** (first run reads ~290k same-size candidates and fingerprints existing thumbnails).
 2. **First release** (milestone 8, early): GitHub Actions builds the Linux AppImage + `.deb` and the Windows installer on a version tag; Tauri updater with signed updates from GitHub Releases ([maysalim-sudo/Rummage](https://github.com/maysalim-sudo/Rummage)); ffmpeg and ImageMagick bundled.
 3. **Moving and copying files** (milestone 3) — **through Squeue**, not built here. See below.
 4. Tags, ratings, collections, XMP sidecars (milestone 4).

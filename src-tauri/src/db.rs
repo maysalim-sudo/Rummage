@@ -120,6 +120,22 @@ CREATE INDEX files_dir ON files(volume_id, dir, missing);
 -- portrait depth mask from ffmpeg, the others mostly failed).
 UPDATE files SET processed_scan = 0
 WHERE ext IN ('heic', 'heif', 'avif', 'psd', 'psb', 'svg', 'tga', 'exr', 'hdr', 'jxl');
+"#, r#"
+-- Duplicate finder (dupes.rs). Hashes are valid while hash_scan = changed_scan.
+ALTER TABLE files ADD COLUMN quick_hash TEXT;
+ALTER TABLE files ADD COLUMN full_hash TEXT;
+ALTER TABLE files ADD COLUMN hash_scan INTEGER NOT NULL DEFAULT 0;
+-- 64-bit difference hash of the thumbnail, for similar-looking images.
+ALTER TABLE files ADD COLUMN phash INTEGER;
+CREATE INDEX files_size ON files(size) WHERE missing = 0;
+CREATE INDEX files_full_hash ON files(full_hash) WHERE full_hash IS NOT NULL;
+
+-- Groups of similar images from the last "find duplicates" run.
+CREATE TABLE similar_members (
+    group_id  INTEGER NOT NULL,
+    file_id   INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    PRIMARY KEY (group_id, file_id)
+);
 "#];
 
 /// Opens (creating if needed) the catalog in `dir` and brings its schema up to date.

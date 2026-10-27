@@ -168,6 +168,63 @@ export const api = {
   openInVlc: (id: number) => invoke<void>("open_in_vlc", { id }),
 };
 
+export type DupeStage = "quickHash" | "fullHash" | "fingerprints" | "comparing";
+
+export interface DupeProgress {
+  stage: DupeStage;
+  done: number;
+  total: number;
+}
+
+export interface DupeSummary {
+  exactGroups: number;
+  /** Bytes freed by keeping one copy of every exact group. */
+  exactWasted: number;
+  similarGroups: number;
+  /** Possible copies on unplugged drives that could not be checked yet. */
+  uncheckedOffline: number;
+}
+
+export interface DupeGroup {
+  key: string;
+  /** Suggested keeper first. */
+  files: FileRow[];
+  wasted: number;
+}
+
+export interface DupeGroupPage {
+  total: number;
+  groups: DupeGroup[];
+}
+
+export interface DupesFinished {
+  summary: DupeSummary | null;
+  error: string | null;
+  cancelled: boolean;
+}
+
+export interface TrashReport {
+  trashed: number[];
+  freed: number;
+  /** [file id, reason] for files that were left alone. */
+  skipped: [number, string][];
+}
+
+export const dupesApi = {
+  start: () => invoke<void>("start_dupe_search"),
+  cancel: () => invoke<void>("cancel_dupe_search"),
+  summary: () => invoke<DupeSummary>("dupe_summary"),
+  groups: (kind: "exact" | "similar", offset: number, limit: number) =>
+    invoke<DupeGroupPage>("dupe_groups", { kind, offset, limit }),
+  trash: (ids: number[]) => invoke<TrashReport>("trash_files", { ids }),
+};
+
+export const onDupesProgress = (cb: (p: DupeProgress) => void): Promise<UnlistenFn> =>
+  listen<DupeProgress>("dupes-progress", (e) => cb(e.payload));
+
+export const onDupesFinished = (cb: (f: DupesFinished) => void): Promise<UnlistenFn> =>
+  listen<DupesFinished>("dupes-finished", (e) => cb(e.payload));
+
 interface MediaServer {
   port: number;
   token: string;

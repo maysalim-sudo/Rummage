@@ -20,6 +20,7 @@
   import FileList from "./lib/FileList.svelte";
   import FileGrid from "./lib/FileGrid.svelte";
   import Inspector from "./lib/Inspector.svelte";
+  import DupesView from "./lib/DupesView.svelte";
   import MultiSelect, { type Option } from "./lib/MultiSelect.svelte";
 
   type View = "grid" | "list";
@@ -79,6 +80,7 @@
   let durations = $state<string[]>([]);
 
   // View
+  let mode = $state<"browse" | "dupes">("browse");
   let view = $state<View>(loadPref("view", "grid") as View);
   let tileSize = $state(Number(loadPref("tileSize", "180")));
   let selected = $state<{ id: number; index: number } | null>(null);
@@ -259,7 +261,7 @@
 {:else if !setup.catalogDir}
   <Setup info={setup} onDone={async () => (setup = await api.getSetup())} />
 {:else}
-  <div class="app" class:with-inspector={selected !== null}>
+  <div class="app" class:with-inspector={selected !== null && mode === "browse"}>
     <aside>
       <DriveList
         bind:volumes
@@ -273,62 +275,70 @@
 
     <main>
       <div class="toolbar">
-        <input class="search" type="search" placeholder="Search file and folder names…" bind:value={text} />
-        <div class="segmented" role="group" aria-label="View">
-          <button class:on={view === "grid"} onclick={() => (view = "grid")}>Grid</button>
-          <button class:on={view === "list"} onclick={() => (view = "list")}>List</button>
+        <div class="segmented" role="tablist" aria-label="Mode">
+          <button role="tab" aria-selected={mode === "browse"} class:on={mode === "browse"} onclick={() => (mode = "browse")}>Browse</button>
+          <button role="tab" aria-selected={mode === "dupes"} class:on={mode === "dupes"} onclick={() => (mode = "dupes")}>Duplicates</button>
         </div>
-        {#if view === "grid"}
-          <input type="range" min="110" max="360" step="10" bind:value={tileSize} aria-label="Thumbnail size" />
-        {/if}
-        <select bind:value={sort} aria-label="Sort">
-          <option value="newest">Newest first</option>
-          <option value="oldest">Oldest first</option>
-          <option value="name">Name</option>
-          <option value="largest">Largest first</option>
-        </select>
-        <span class="count muted">{formatCount(files.total)} files</span>
-      </div>
-
-      <div class="toolbar filters">
-        <MultiSelect placeholder="All types" noun="types" options={kindOptions} bind:selected={kinds} />
-        <MultiSelect placeholder="Any resolution" noun="sizes" options={sideBuckets} bind:selected={sides} />
-        <MultiSelect
-          placeholder="Any orientation"
-          noun="orientations"
-          options={orientationOptions}
-          bind:selected={orientations}
-        />
-        <MultiSelect
-          placeholder="Any camera"
-          noun="cameras"
-          options={cameraOptions}
-          bind:selected={chosenCameras}
-          searchable
-        />
-        <MultiSelect placeholder="Any length" noun="lengths" options={durationBuckets} bind:selected={durations} />
-        <label>From <input type="date" bind:value={dateFrom} /></label>
-        <label>To <input type="date" bind:value={dateTo} /></label>
-        <label><input type="checkbox" bind:checked={includeMissing} /> Show deleted</label>
-        {#if filtersActive}
-          <button onclick={clearFilters}>Clear filters</button>
+        {#if mode === "browse"}
+          <input class="search" type="search" placeholder="Search file and folder names…" bind:value={text} />
+          <div class="segmented" role="group" aria-label="View">
+            <button class:on={view === "grid"} onclick={() => (view = "grid")}>Grid</button>
+            <button class:on={view === "list"} onclick={() => (view = "list")}>List</button>
+          </div>
+          {#if view === "grid"}
+            <input type="range" min="110" max="360" step="10" bind:value={tileSize} aria-label="Thumbnail size" />
+          {/if}
+          <select bind:value={sort} aria-label="Sort">
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+            <option value="name">Name</option>
+            <option value="largest">Largest first</option>
+          </select>
+          <span class="count muted">{formatCount(files.total)} files</span>
         {/if}
       </div>
 
-      {#if selectedVolume !== null && selectedFolder !== null}
-        <nav class="toolbar crumbs" aria-label="Folder">
-          <button class="crumb" onclick={() => (selectedFolder = null)}>{labels.get(selectedVolume) ?? "Drive"}</button>
-          {#each crumbs as [name, path], i (path)}
-            <span class="muted">/</span>
-            {#if i === crumbs.length - 1}
-              <span class="crumb current">{name}</span>
-            {:else}
-              <button class="crumb" onclick={() => (selectedFolder = path)}>{name}</button>
-            {/if}
-          {/each}
-          <label class="subfolders"><input type="checkbox" bind:checked={includeSubfolders} /> Include subfolders</label>
-          <button onclick={() => (selectedFolder = null)} aria-label="Show the whole drive">✕</button>
-        </nav>
+      {#if mode === "browse"}
+        <div class="toolbar filters">
+          <MultiSelect placeholder="All types" noun="types" options={kindOptions} bind:selected={kinds} />
+          <MultiSelect placeholder="Any resolution" noun="sizes" options={sideBuckets} bind:selected={sides} />
+          <MultiSelect
+            placeholder="Any orientation"
+            noun="orientations"
+            options={orientationOptions}
+            bind:selected={orientations}
+          />
+          <MultiSelect
+            placeholder="Any camera"
+            noun="cameras"
+            options={cameraOptions}
+            bind:selected={chosenCameras}
+            searchable
+          />
+          <MultiSelect placeholder="Any length" noun="lengths" options={durationBuckets} bind:selected={durations} />
+          <label>From <input type="date" bind:value={dateFrom} /></label>
+          <label>To <input type="date" bind:value={dateTo} /></label>
+          <label><input type="checkbox" bind:checked={includeMissing} /> Show deleted</label>
+          {#if filtersActive}
+            <button onclick={clearFilters}>Clear filters</button>
+          {/if}
+        </div>
+
+        {#if selectedVolume !== null && selectedFolder !== null}
+          <nav class="toolbar crumbs" aria-label="Folder">
+            <button class="crumb" onclick={() => (selectedFolder = null)}>{labels.get(selectedVolume) ?? "Drive"}</button>
+            {#each crumbs as [name, path], i (path)}
+              <span class="muted">/</span>
+              {#if i === crumbs.length - 1}
+                <span class="crumb current">{name}</span>
+              {:else}
+                <button class="crumb" onclick={() => (selectedFolder = path)}>{name}</button>
+              {/if}
+            {/each}
+            <label class="subfolders"><input type="checkbox" bind:checked={includeSubfolders} /> Include subfolders</label>
+            <button onclick={() => (selectedFolder = null)} aria-label="Show the whole drive">✕</button>
+          </nav>
+        {/if}
       {/if}
 
       {#if error}
@@ -339,7 +349,9 @@
       {/if}
 
       <div class="content">
-        {#if view === "grid"}
+        {#if mode === "dupes"}
+          <DupesView {labels} onError={showError} />
+        {:else if view === "grid"}
           <FileGrid {files} bind:selected {tileSize} {labels} {emptyMessage} onOpen={open} />
         {:else}
           <FileList {files} bind:selected {labels} {emptyMessage} onOpen={open} />
@@ -347,7 +359,7 @@
       </div>
     </main>
 
-    {#if selected}
+    {#if selected && mode === "browse"}
       <Inspector fileId={selected.id} {refreshKey} {labels} onError={showError} />
     {/if}
   </div>

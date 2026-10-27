@@ -130,6 +130,23 @@ pub fn from_ffmpeg(path: &Path, seek_seconds: Option<f64>) -> Result<Vec<u8>> {
     Ok(jpeg)
 }
 
+/// 64-bit difference hash of an image: shrink to 9×8 grey pixels and record, for each
+/// pixel pair in a row, whether brightness goes up. Resizing, recompressing and small
+/// edits barely change it, so similar images have hashes a few bits apart.
+/// None for (nearly) flat images, whose hash says nothing about their content.
+pub fn dhash(jpeg: &[u8]) -> Option<i64> {
+    let small = image::load_from_memory(jpeg).ok()?.resize_exact(9, 8, FilterType::Triangle).to_luma8();
+    let mut hash: u64 = 0;
+    for y in 0..8 {
+        for x in 0..8 {
+            let brighter = small.get_pixel(x + 1, y).0[0] > small.get_pixel(x, y).0[0];
+            hash = (hash << 1) | brighter as u64;
+        }
+    }
+    let ones = hash.count_ones();
+    (ones > 2 && ones < 62).then_some(hash as i64)
+}
+
 /// Rotates/flips per EXIF orientation 1–8 so the thumbnail displays upright.
 fn orient(image: DynamicImage, orientation: u32) -> DynamicImage {
     match orientation {
@@ -220,6 +237,26 @@ mod tests {
                 println!("{file}: {name} {}x{}", img.width(), img.height());
             }
         }
+    }
+
+    #[test]
+    fn dhash_survives_resizing_but_tells_images_apart() {
+        let gradient = |w: u32, h: u32, flip: bool| {
+            let img = RgbImage::from_fn(w, h, |x, y| {
+                let v = ((x * 255 / w) as u8).wrapping_add((y * 40 / h) as u8);
+                image::Rgb(if flip { [255 - v, 255 - v, 255 - v] } else { [v, v / 2, 255 - v] })
+            });
+            let mut out = Vec::new();
+            img.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).unwrap();
+            out
+        };
+        let big = dhash(&gradient(800, 600, false)).unwrap();
+        let small = dhash(&gradient(200, 150, false)).unwrap();
+        let other = dhash(&gradient(800, 600, true)).unwrap();
+        assert!((big ^ small).count_ones() <= 4, "resized copy should match");
+        assert!((big ^ other).count_ones() > 20, "a different image should not");
+        // A flat image has no meaningful hash.
+        assert_eq!(dhash(&png(100, 100)), None);
     }
 
     #[test]

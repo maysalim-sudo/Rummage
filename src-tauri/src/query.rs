@@ -116,10 +116,10 @@ pub struct CameraCount {
     pub count: i64,
 }
 
-const ROW_COLUMNS: &str = "id, volume_id, rel_path, dir, name, ext, kind, size, mtime, missing,
+pub(crate) const ROW_COLUMNS: &str = "id, volume_id, rel_path, dir, name, ext, kind, size, mtime, missing,
     width, height, sort_date, duration_ms, camera, CASE WHEN thumb_ok THEN processed_scan END";
 
-fn map_row(r: &rusqlite::Row) -> rusqlite::Result<FileRow> {
+pub(crate) fn map_row(r: &rusqlite::Row) -> rusqlite::Result<FileRow> {
     Ok(FileRow {
         id: r.get(0)?,
         volume_id: r.get(1)?,

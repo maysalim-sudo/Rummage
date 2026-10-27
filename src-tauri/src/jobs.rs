@@ -197,6 +197,8 @@ struct Pending {
 struct Outcome {
     info: MediaInfo,
     thumb_ok: bool,
+    /// Difference hash of the thumbnail, for finding similar images (not videos).
+    phash: Option<i64>,
     error: Option<String>,
 }
 
@@ -236,7 +238,13 @@ fn process_file(catalog_dir: &Path, mount: &Path, row: &Pending) -> Outcome {
         Some(kind) => image_thumb(&path, kind, &mut out.info),
         None => Err(anyhow::anyhow!("unknown file type")),
     };
-    match thumb.and_then(|jpeg| thumbs::save(catalog_dir, row.id, &jpeg)) {
+    let is_video = row.kind == MediaKind::Video.as_i64();
+    match thumb.and_then(|jpeg| {
+        if !is_video {
+            out.phash = thumbs::dhash(&jpeg);
+        }
+        thumbs::save(catalog_dir, row.id, &jpeg)
+    }) {
         Ok(()) => out.thumb_ok = true,
         Err(e) => {
             out.error.get_or_insert_with(|| format!("{e:#}"));
@@ -275,7 +283,7 @@ fn write_results(conn: &Connection, results: &[(i64, i64, Outcome)]) -> Result<(
             "UPDATE files SET width = ?2, height = ?3, taken_at = ?4, camera = ?5, lens = ?6, iso = ?7,
                     f_number = ?8, exposure = ?9, focal_mm = ?10, gps_lat = ?11, gps_lon = ?12,
                     duration_ms = ?13, codec = ?14, fps = ?15,
-                    processed_scan = ?16, thumb_ok = ?17, process_error = ?18
+                    processed_scan = ?16, thumb_ok = ?17, process_error = ?18, phash = ?19
              WHERE id = ?1",
         )?;
         for (id, changed_scan, o) in results {
@@ -283,7 +291,7 @@ fn write_results(conn: &Connection, results: &[(i64, i64, Outcome)]) -> Result<(
             stmt.execute(params![
                 id, i.width, i.height, i.taken_at, i.camera, i.lens, i.iso, i.f_number, i.exposure,
                 i.focal_mm, i.gps_lat, i.gps_lon, i.duration_ms, i.codec, i.fps,
-                changed_scan, o.thumb_ok, o.error
+                changed_scan, o.thumb_ok, o.error, o.phash
             ])?;
         }
     }
