@@ -7,15 +7,23 @@ drive is unplugged.
 Built with Tauri 2 (Rust core) and Svelte 5. The full architecture and roadmap are in
 [docs/architecture.md](docs/architecture.md).
 
-## Status: milestone 1
+## Status: milestone 2
 
 - Detects mounted drives and identifies them by filesystem UUID plus a `.mediacat-id`
   marker file at the drive root, so a drive is recognized at any mount path or drive letter.
+  Drives can be renamed.
 - Incremental scanner: unchanged files are skipped, deleted files are flagged (not
-  forgotten), and HDDs are read single-threaded.
+  forgotten), and HDDs are read single-threaded. Hidden folders, macOS `._` files and
+  TypeScript `.ts` files (vs. real MPEG-TS video) are left out.
+- Background processing after each scan: EXIF details (camera, lens, exposure, date
+  taken, GPS) and ffprobe video details (duration, codec, fps), plus a 384 px JPEG
+  thumbnail per file. One worker per physical disk; pausable.
 - SQLite catalog with full-text search on file and folder names.
-- UI: first-run catalog location picker, drive sidebar with live scan progress, and a
-  virtualized file list (search, type filter, sort, open / show in folder).
+- UI: grid view with adjustable thumbnail size and a list view (both virtualized,
+  keyboard navigable), filters (type, resolution, orientation, camera, video length,
+  date range), and an inspector with a full-size preview and all details.
+
+Not yet: RAW thumbnails (milestone 6) and video hover-scrub previews (poster frames only).
 
 ## Development
 

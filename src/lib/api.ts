@@ -1,5 +1,5 @@
 // Typed wrappers around the Rust commands in src-tauri/src/lib.rs.
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export type MediaKind = "image" | "video" | "raw";
@@ -47,12 +47,21 @@ export interface ScanFinished {
   error: string | null;
 }
 
+export type Orientation = "landscape" | "portrait" | "square";
+
 export interface FileQuery {
   text?: string;
   volumeId?: number | null;
   kind?: MediaKind | null;
   includeMissing?: boolean;
   sort?: Sort;
+  minSide?: number | null;
+  orientation?: Orientation | null;
+  dateFrom?: number | null;
+  dateTo?: number | null;
+  camera?: string | null;
+  minDurationMs?: number | null;
+  maxDurationMs?: number | null;
 }
 
 export interface FileRow {
@@ -66,7 +75,46 @@ export interface FileRow {
   size: number;
   mtime: number;
   missing: boolean;
+  width: number | null;
+  height: number | null;
+  /** Date taken, or modified when unknown (unix seconds). */
+  date: number;
+  durationMs: number | null;
+  camera: string | null;
+  /** Thumbnail version; null when there is no thumbnail (yet). */
+  thumb: number | null;
   absPath: string | null;
+}
+
+export interface FileDetails extends FileRow {
+  takenAt: number | null;
+  lens: string | null;
+  iso: number | null;
+  fNumber: number | null;
+  exposure: string | null;
+  focalMm: number | null;
+  gpsLat: number | null;
+  gpsLon: number | null;
+  codec: string | null;
+  fps: number | null;
+  processed: boolean;
+  processError: string | null;
+}
+
+export interface CameraCount {
+  camera: string;
+  count: number;
+}
+
+export interface JobProgress {
+  volumeId: number;
+  done: number;
+  total: number;
+}
+
+export interface JobsStatus {
+  paused: boolean;
+  volumes: JobProgress[];
 }
 
 export interface Page {
@@ -80,14 +128,35 @@ export const api = {
   setCatalogDir: (path: string) => invoke<void>("set_catalog_dir", { path }),
   listVolumes: () => invoke<Volume[]>("list_volumes"),
   addVolume: (mount: string) => invoke<number>("add_volume", { mount }),
+  renameVolume: (id: number, label: string) => invoke<void>("rename_volume", { id, label }),
   removeVolume: (id: number) => invoke<void>("remove_volume", { id }),
   startScan: (id: number) => invoke<void>("start_scan", { id }),
   cancelScan: (id: number) => invoke<void>("cancel_scan", { id }),
+  jobsStatus: () => invoke<JobsStatus>("jobs_status"),
+  setJobsPaused: (paused: boolean) => invoke<void>("set_jobs_paused", { paused }),
   queryFiles: (query: FileQuery, offset: number, limit: number) =>
     invoke<Page>("query_files", { query, offset, limit }),
+  fileDetails: (id: number) => invoke<FileDetails>("file_details", { id }),
+  listCameras: () => invoke<CameraCount[]>("list_cameras"),
   openFile: (id: number) => invoke<void>("open_file", { id }),
   revealFile: (id: number) => invoke<void>("reveal_file", { id }),
 };
+
+/** Thumbnail URL (served from the catalog by the Rust `media://` protocol), or null. */
+export function thumbUrl(row: Pick<FileRow, "id" | "thumb">): string | null {
+  return row.thumb === null ? null : `${convertFileSrc(`t${row.id}`, "media")}?v=${row.thumb}`;
+}
+
+/** Formats the browser can show directly as a full-size preview. */
+const PREVIEWABLE = new Set(["jpg", "jpeg", "jpe", "jfif", "png", "gif", "webp", "bmp", "avif", "svg"]);
+
+/** URL of the original file for the preview panel, or null if it cannot be shown. */
+export function originalUrl(row: Pick<FileRow, "id" | "ext" | "absPath">): string | null {
+  return row.absPath && PREVIEWABLE.has(row.ext) ? convertFileSrc(`o${row.id}`, "media") : null;
+}
+
+export const onJobsProgress = (cb: (s: JobsStatus) => void): Promise<UnlistenFn> =>
+  listen<JobsStatus>("jobs-progress", (e) => cb(e.payload));
 
 export const onScanProgress = (cb: (p: ScanProgress) => void): Promise<UnlistenFn> =>
   listen<ScanProgress>("scan-progress", (e) => cb(e.payload));

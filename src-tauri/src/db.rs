@@ -82,6 +82,34 @@ CREATE TRIGGER files_fts_au AFTER UPDATE OF name, dir ON files BEGIN
     INSERT INTO files_fts(files_fts, rowid, name, dir) VALUES ('delete', old.id, old.name, old.dir);
     INSERT INTO files_fts(rowid, name, dir) VALUES (new.id, new.name, new.dir);
 END;
+"#, r#"
+-- Photo / video details, filled in by the background processor (jobs.rs).
+-- width/height are display dimensions, i.e. after EXIF or video rotation.
+ALTER TABLE files ADD COLUMN width INTEGER;
+ALTER TABLE files ADD COLUMN height INTEGER;
+ALTER TABLE files ADD COLUMN taken_at INTEGER;
+ALTER TABLE files ADD COLUMN camera TEXT;
+ALTER TABLE files ADD COLUMN lens TEXT;
+ALTER TABLE files ADD COLUMN iso INTEGER;
+ALTER TABLE files ADD COLUMN f_number REAL;
+ALTER TABLE files ADD COLUMN exposure TEXT;
+ALTER TABLE files ADD COLUMN focal_mm REAL;
+ALTER TABLE files ADD COLUMN gps_lat REAL;
+ALTER TABLE files ADD COLUMN gps_lon REAL;
+ALTER TABLE files ADD COLUMN duration_ms INTEGER;
+ALTER TABLE files ADD COLUMN codec TEXT;
+ALTER TABLE files ADD COLUMN fps REAL;
+-- The changed_scan this file was last processed at; pending while it is older.
+ALTER TABLE files ADD COLUMN processed_scan INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE files ADD COLUMN thumb_ok INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE files ADD COLUMN process_error TEXT;
+ALTER TABLE files ADD COLUMN sort_date INTEGER GENERATED ALWAYS AS (COALESCE(taken_at, mtime)) VIRTUAL;
+
+DROP INDEX files_kind;
+DROP INDEX files_mtime;
+CREATE INDEX files_sort_date ON files(sort_date);
+CREATE INDEX files_kind_date ON files(kind, sort_date);
+CREATE INDEX files_camera ON files(camera) WHERE camera IS NOT NULL;
 "#];
 
 /// Opens (creating if needed) the catalog in `dir` and brings its schema up to date.

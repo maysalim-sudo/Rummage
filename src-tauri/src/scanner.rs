@@ -19,16 +19,12 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 const BATCH_SIZE: usize = 2000;
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
 
-/// Folder names never worth scanning (trash, OS internals, tooling).
-const SKIP_DIRS: &[&str] = &[
-    "$recycle.bin",
-    "system volume information",
-    ".trashes",
-    "lost+found",
-    ".cache",
-    "node_modules",
-    ".git",
-];
+/// Folder names never worth scanning (trash, OS internals, tooling). Hidden folders
+/// (names starting with '.', e.g. ~/.config, ~/.cache, .git) are skipped too.
+const SKIP_DIRS: &[&str] = &["$recycle.bin", "system volume information", "lost+found", "node_modules"];
+
+/// Extensions shared by MPEG transport-stream video and TypeScript source code.
+const TRANSPORT_STREAM_EXTS: &[&str] = &["ts", "mts", "m2ts"];
 
 #[derive(Clone, Debug, Default, Serialize, PartialEq, Eq)]
 pub struct ScanStats {
@@ -116,6 +112,8 @@ fn walk_roots(
     let mut batch: Vec<Row> = Vec::with_capacity(BATCH_SIZE);
     let mut last_report = Instant::now();
     let mut complete_roots: Vec<&str> = Vec::new();
+    // Files that exist but are not media after all (e.g. TypeScript .ts files).
+    let mut rejected: Vec<String> = Vec::new();
 
     for root in roots {
         let abs_root = paths::from_rel(mount, root);
@@ -133,7 +131,11 @@ fn walk_roots(
             .skip_hidden(false)
             .follow_links(false)
             .parallelism(parallelism)
-            .process_read_dir(|_, _, _, children| {
+            .process_read_dir(|depth, _, _, children| {
+                // jwalk also passes the root itself (depth None); never prune the root.
+                if depth.is_none() {
+                    return;
+                }
                 children.retain(|entry| match entry {
                     Ok(e) => !(e.file_type().is_dir() && should_skip_dir(&e.file_name().to_string_lossy())),
                     Err(_) => true,
@@ -153,7 +155,11 @@ fn walk_roots(
                 continue;
             }
             let name = entry.file_name().to_string_lossy();
-            let Some(kind) = MediaKind::from_ext(&paths::ext_lower(&name)) else {
+            if name.starts_with("._") {
+                continue; // macOS resource-fork files, not real images
+            }
+            let ext = paths::ext_lower(&name);
+            let Some(kind) = MediaKind::from_ext(&ext) else {
                 continue;
             };
             let path = entry.path();
@@ -161,6 +167,10 @@ fn walk_roots(
                 stats.skipped += 1;
                 continue;
             };
+            if TRANSPORT_STREAM_EXTS.contains(&ext.as_str()) && !is_transport_stream(&path) {
+                rejected.push(rel);
+                continue;
+            }
             let mtime = meta
                 .modified()
                 .ok()
@@ -182,14 +192,47 @@ fn walk_roots(
         complete_roots.push(root);
     }
     flush(conn, volume_id, scan_id, &mut batch, &mut stats)?;
+    forget_excluded(conn, volume_id, scan_id, &complete_roots, &rejected)?;
     stats.removed = mark_missing(conn, volume_id, scan_id, &complete_roots)?;
     on_progress(&stats, "");
     Ok((ScanStatus::Done, stats))
 }
 
 fn should_skip_dir(name: &str) -> bool {
-    let lower = name.to_lowercase();
-    SKIP_DIRS.contains(&lower.as_str()) || lower.starts_with(".trash-")
+    name.starts_with('.') || SKIP_DIRS.contains(&name.to_lowercase().as_str())
+}
+
+/// MPEG-TS packets start with the sync byte 0x47; Blu-ray/AVCHD (.m2ts, .mts) put a
+/// 4-byte timestamp before it. TypeScript source files never start like that.
+fn is_transport_stream(path: &Path) -> bool {
+    use std::io::Read;
+    let mut head = [0u8; 5];
+    std::fs::File::open(path)
+        .and_then(|mut f| f.read_exact(&mut head))
+        .is_ok_and(|_| head[0] == 0x47 || head[4] == 0x47)
+}
+
+/// Drops catalog entries that the current rules no longer treat as media (files in
+/// hidden folders, non-video .ts files), so they don't linger as "deleted" files.
+fn forget_excluded(conn: &mut Connection, volume_id: i64, scan_id: i64, roots: &[&str], rejected: &[String]) -> Result<()> {
+    let tx = conn.transaction()?;
+    {
+        let mut stmt = tx.prepare_cached("DELETE FROM files WHERE volume_id = ?1 AND rel_path = ?2")?;
+        for rel in rejected {
+            stmt.execute(params![volume_id, rel])?;
+        }
+        for root in roots {
+            tx.execute(
+                "DELETE FROM files
+                 WHERE volume_id = ?1 AND seen_scan < ?2
+                   AND (rel_path LIKE '.%' OR rel_path LIKE '%/.%' OR name LIKE '.\\_%' ESCAPE '\\')
+                   AND (?3 = '' OR substr(rel_path, 1, length(?3) + 1) = ?3 || '/')",
+                params![volume_id, scan_id, root],
+            )?;
+        }
+    }
+    tx.commit()?;
+    Ok(())
 }
 
 fn flush(conn: &mut Connection, volume_id: i64, scan_id: i64, batch: &mut Vec<Row>, stats: &mut ScanStats) -> Result<()> {
@@ -326,6 +369,43 @@ mod tests {
             .query_row("SELECT missing FROM files WHERE name = 'clip.mp4'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(missing, 0);
+    }
+
+    #[test]
+    fn skips_typescript_hidden_folders_and_resource_forks() {
+        let (_c, drive, mut conn) = setup();
+        let d = drive.path();
+        fs::create_dir_all(d.join("code/.config")).unwrap();
+        fs::create_dir_all(d.join("Videos")).unwrap();
+        fs::write(d.join("code/app.ts"), b"export const x = 1;\n").unwrap();
+        fs::write(d.join("code/vite.config.mts"), b"import x from 'y';\n").unwrap();
+        fs::write(d.join("code/.config/icon.png"), b"png").unwrap();
+        fs::write(d.join("Videos/._clip.jpg"), b"junk").unwrap();
+        let mut ts = vec![0x47u8; 376];
+        ts[1] = 0x40;
+        fs::write(d.join("Videos/broadcast.ts"), &ts).unwrap();
+        let mut m2ts = vec![0u8; 384];
+        m2ts[4] = 0x47;
+        fs::write(d.join("Videos/00001.MTS"), &m2ts).unwrap();
+
+        // Entries a previous version catalogued but the rules now exclude.
+        conn.execute_batch(
+            "INSERT INTO files (volume_id, rel_path, dir, name, ext, kind, size, mtime, first_scan, changed_scan, seen_scan)
+             VALUES (1, 'code/app.ts', 'code', 'app.ts', 'ts', 2, 20, 0, 0, 0, 0),
+                    (1, 'code/.config/icon.png', 'code/.config', 'icon.png', 'png', 1, 3, 0, 0, 0, 0);",
+        )
+        .unwrap();
+
+        let (_, stats) = scan(&mut conn, d, &[""]);
+        assert_eq!((stats.files_seen, stats.removed), (2, 0));
+        let names: Vec<String> = conn
+            .prepare("SELECT name FROM files ORDER BY name")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(names, ["00001.MTS", "broadcast.ts"]);
     }
 
     #[test]

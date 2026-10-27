@@ -23,6 +23,8 @@ pub struct DetectedVolume {
     pub free_bytes: u64,
     pub rotational: bool,
     pub removable: bool,
+    /// The physical disk holding this volume (partitions of one disk share it).
+    pub disk: String,
 }
 
 /// Lists mounted drives that can hold media.
@@ -44,6 +46,7 @@ pub fn detect() -> Vec<DetectedVolume> {
         let volume = DetectedVolume {
             uuid,
             label,
+            disk: platform.disk.unwrap_or_else(|| device.clone()),
             mount,
             fs_type,
             total_bytes: disk.total_space(),
@@ -120,6 +123,7 @@ fn is_media_mount(mount: &Path, fs_type: &str) -> bool {
 struct PlatformIdentity {
     uuid: Option<String>,
     label: Option<String>,
+    disk: Option<String>,
 }
 
 #[cfg(target_os = "linux")]
@@ -140,6 +144,19 @@ mod platform {
         PlatformIdentity {
             uuid: lookup("/dev/disk/by-uuid"),
             label: lookup("/dev/disk/by-label"),
+            disk: device.as_deref().and_then(parent_disk),
+        }
+    }
+
+    /// "/dev/sda1" → "sda", "/dev/nvme0n1p2" → "nvme0n1": a partition's sysfs entry
+    /// lives inside its disk's entry.
+    fn parent_disk(device: &Path) -> Option<String> {
+        let name = device.file_name()?.to_str()?;
+        let sys = std::fs::canonicalize(format!("/sys/class/block/{name}")).ok()?;
+        if sys.join("partition").exists() {
+            Some(sys.parent()?.file_name()?.to_str()?.to_string())
+        } else {
+            Some(name.to_string())
         }
     }
 
@@ -203,13 +220,15 @@ mod platform {
             )
         };
         if ok == 0 {
-            return PlatformIdentity { uuid: None, label: None };
+            return PlatformIdentity { uuid: None, label: None, disk: None };
         }
         let len = label.iter().position(|&c| c == 0).unwrap_or(label.len());
         let label = String::from_utf16_lossy(&label[..len]);
         PlatformIdentity {
             uuid: Some(format!("{:04X}-{:04X}", serial >> 16, serial & 0xFFFF)),
             label: (!label.is_empty()).then_some(label),
+            // Each drive letter gets its own worker on Windows for now.
+            disk: Some(mount.to_string_lossy().to_string()),
         }
     }
 }
@@ -220,7 +239,7 @@ mod platform {
     use std::path::Path;
 
     pub fn identity(_device: &str, _mount: &Path) -> PlatformIdentity {
-        PlatformIdentity { uuid: None, label: None }
+        PlatformIdentity { uuid: None, label: None, disk: None }
     }
 }
 
@@ -241,7 +260,10 @@ mod tests {
     #[ignore]
     fn detect_on_this_machine() {
         for v in detect() {
-            println!("{:?} {:?} {} {} rotational={}", v.uuid, v.label, v.mount.display(), v.fs_type, v.rotational);
+            println!(
+                "{:?} {:?} {} {} rotational={} disk={}",
+                v.uuid, v.label, v.mount.display(), v.fs_type, v.rotational, v.disk
+            );
         }
     }
 

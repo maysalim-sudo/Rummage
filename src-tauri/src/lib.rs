@@ -1,18 +1,23 @@
 mod config;
 mod db;
+mod jobs;
 mod media_kind;
+mod meta;
 mod paths;
 mod query;
 mod scanner;
+mod thumbs;
+mod tools;
 mod volumes;
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
-use tauri::{AppHandle, Emitter, State};
+use tauri::http::{header, Request, Response, StatusCode};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
 type CmdResult<T> = Result<T, String>;
@@ -26,13 +31,21 @@ struct Catalog {
     conn: Connection,
 }
 
+#[derive(Clone)]
+struct Mounted {
+    path: PathBuf,
+    disk: String,
+    rotational: bool,
+}
+
 #[derive(Default)]
 struct AppState {
     catalog: Mutex<Option<Catalog>>,
     /// Cancel flags of running scans, by volume id.
     scans: Mutex<HashMap<i64, Arc<AtomicBool>>>,
     /// Where each catalogued volume is mounted right now (refreshed by `list_volumes`).
-    mounts: Mutex<HashMap<i64, PathBuf>>,
+    mounts: Mutex<HashMap<i64, Mounted>>,
+    jobs: Arc<jobs::Jobs>,
 }
 
 impl AppState {
@@ -54,6 +67,41 @@ impl AppState {
         }
         Ok(guard)
     }
+
+    fn catalog_dir(&self) -> Option<PathBuf> {
+        self.catalog.lock().ok()?.as_ref().map(|c| c.dir.clone())
+    }
+
+    fn mount_of(&self, volume_id: i64) -> Option<PathBuf> {
+        self.mounts.lock().ok()?.get(&volume_id).map(|m| m.path.clone())
+    }
+}
+
+/// Starts background processing for every plugged-in drive that is not being scanned.
+fn start_jobs(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let Some(catalog_dir) = state.catalog_dir() else { return };
+    let scanning: Vec<i64> = state.scans.lock().map(|s| s.keys().copied().collect()).unwrap_or_default();
+    let targets: Vec<jobs::Target> = state
+        .mounts
+        .lock()
+        .map(|m| {
+            m.iter()
+                .filter(|(id, _)| !scanning.contains(id))
+                .map(|(&volume_id, m)| jobs::Target {
+                    volume_id,
+                    mount: m.path.clone(),
+                    disk: m.disk.clone(),
+                    rotational: m.rotational,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let handle = app.clone();
+    let emit: jobs::Emit = Arc::new(move |status| {
+        let _ = handle.emit("jobs-progress", status);
+    });
+    state.jobs.start(&catalog_dir, targets, emit);
 }
 
 // ---------- setup ----------
@@ -119,7 +167,14 @@ struct VolumeView {
 }
 
 #[tauri::command]
-fn list_volumes(state: State<AppState>) -> CmdResult<Vec<VolumeView>> {
+fn list_volumes(app: AppHandle, state: State<AppState>) -> CmdResult<Vec<VolumeView>> {
+    let views = refresh_volumes(&state)?;
+    // Called every few seconds by the UI, so this also resumes processing when a drive returns.
+    start_jobs(&app);
+    Ok(views)
+}
+
+fn refresh_volumes(state: &AppState) -> CmdResult<Vec<VolumeView>> {
     let detected = volumes::detect();
     let guard = state.catalog()?;
     let conn = &guard.as_ref().unwrap().conn;
@@ -169,7 +224,10 @@ fn list_volumes(state: State<AppState>) -> CmdResult<Vec<VolumeView>> {
     for row in &rows {
         let live = detected.iter().find(|d| d.uuid.as_deref() == Some(row.uuid.as_str()));
         if let Some(d) = live {
-            mounts.insert(row.id, d.mount.clone());
+            mounts.insert(
+                row.id,
+                Mounted { path: d.mount.clone(), disk: d.disk.clone(), rotational: d.rotational },
+            );
             conn.execute(
                 "UPDATE volumes SET last_mount = ?2, fs_type = ?3, total_bytes = ?4, free_bytes = ?5,
                         rotational = ?6, last_seen_at = ?7 WHERE id = ?1",
@@ -280,8 +338,27 @@ fn add_volume(state: State<AppState>, mount: String) -> CmdResult<i64> {
     let id = conn.last_insert_rowid();
     conn.execute("INSERT INTO scan_roots (volume_id, rel_path) VALUES (?1, ?2)", params![id, root])
         .map_err(err)?;
-    state.mounts.lock().map_err(err)?.insert(id, mount);
+    state.mounts.lock().map_err(err)?.insert(
+        id,
+        Mounted { path: mount, disk: detected.disk, rotational: detected.rotational },
+    );
     Ok(id)
+}
+
+#[tauri::command]
+fn rename_volume(state: State<AppState>, id: i64, label: String) -> CmdResult<()> {
+    let label = label.trim();
+    if label.is_empty() {
+        return Err("the name cannot be empty".into());
+    }
+    let guard = state.catalog()?;
+    guard
+        .as_ref()
+        .unwrap()
+        .conn
+        .execute("UPDATE volumes SET label = ?2 WHERE id = ?1", params![id, label])
+        .map_err(err)?;
+    Ok(())
 }
 
 /// Forgets a drive and everything catalogued on it. Files on the drive are untouched.
@@ -317,13 +394,7 @@ struct ScanFinished {
 
 #[tauri::command]
 fn start_scan(app: AppHandle, state: State<AppState>, id: i64) -> CmdResult<()> {
-    let mount = state
-        .mounts
-        .lock()
-        .map_err(err)?
-        .get(&id)
-        .cloned()
-        .ok_or("drive is not plugged in")?;
+    let mount = state.mount_of(id).ok_or("drive is not plugged in")?;
     let (catalog_dir, roots, rotational) = {
         let guard = state.catalog()?;
         let catalog = guard.as_ref().unwrap();
@@ -358,13 +429,26 @@ fn start_scan(app: AppHandle, state: State<AppState>, id: i64) -> CmdResult<()> 
             Ok((status, stats)) => ScanFinished { volume_id: id, status: Some(status), stats: Some(stats), error: None },
             Err(e) => ScanFinished { volume_id: id, status: None, stats: None, error: Some(err(e)) },
         };
-        let state = tauri::Manager::state::<AppState>(&app);
+        let state = app.state::<AppState>();
         if let Ok(mut scans) = state.scans.lock() {
             scans.remove(&id);
         }
+        state.jobs.mark_dirty(id);
         let _ = app.emit("scan-finished", finished);
+        start_jobs(&app);
     });
     Ok(())
+}
+
+#[tauri::command]
+fn jobs_status(state: State<AppState>) -> jobs::Status {
+    state.jobs.status()
+}
+
+#[tauri::command]
+fn set_jobs_paused(app: AppHandle, state: State<AppState>, paused: bool) {
+    state.jobs.set_paused(paused);
+    let _ = app.emit("jobs-progress", state.jobs.status());
 }
 
 #[tauri::command]
@@ -385,11 +469,32 @@ fn query_files(state: State<AppState>, query: query::FileQuery, offset: i64, lim
     };
     let mounts = state.mounts.lock().map_err(err)?;
     for row in &mut page.rows {
-        if let Some(mount) = mounts.get(&row.volume_id) {
-            row.abs_path = Some(paths::from_rel(mount, &row.rel_path).to_string_lossy().to_string());
-        }
+        fill_abs_path(&mounts, row);
     }
     Ok(page)
+}
+
+fn fill_abs_path(mounts: &HashMap<i64, Mounted>, row: &mut query::FileRow) {
+    if let Some(m) = mounts.get(&row.volume_id) {
+        row.abs_path = Some(paths::from_rel(&m.path, &row.rel_path).to_string_lossy().to_string());
+    }
+}
+
+#[tauri::command]
+fn file_details(state: State<AppState>, id: i64) -> CmdResult<query::FileDetails> {
+    let mut details = {
+        let guard = state.catalog()?;
+        query::details(&guard.as_ref().unwrap().conn, id).map_err(err)?
+    };
+    let mounts = state.mounts.lock().map_err(err)?;
+    fill_abs_path(&mounts, &mut details.row);
+    Ok(details)
+}
+
+#[tauri::command]
+fn list_cameras(state: State<AppState>) -> CmdResult<Vec<query::CameraCount>> {
+    let guard = state.catalog()?;
+    query::cameras(&guard.as_ref().unwrap().conn).map_err(err)
 }
 
 fn file_path(state: &AppState, id: i64) -> CmdResult<PathBuf> {
@@ -402,9 +507,57 @@ fn file_path(state: &AppState, id: i64) -> CmdResult<PathBuf> {
             .query_row("SELECT volume_id, rel_path FROM files WHERE id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?)))
             .map_err(err)?
     };
-    let mounts = state.mounts.lock().map_err(err)?;
-    let mount: &Path = mounts.get(&volume_id).ok_or("the drive holding this file is not plugged in")?;
-    Ok(paths::from_rel(mount, &rel))
+    let mount = state.mount_of(volume_id).ok_or("the drive holding this file is not plugged in")?;
+    Ok(paths::from_rel(&mount, &rel))
+}
+
+// ---------- media:// protocol ----------
+
+/// Serves `media://localhost/t<id>` (thumbnail from the cache) and
+/// `media://localhost/o<id>` (the original file, for the preview panel; drive must be plugged in).
+fn serve_media(app: &AppHandle, request: &Request<Vec<u8>>) -> Response<Vec<u8>> {
+    let state = app.state::<AppState>();
+    let path = request.uri().path().trim_start_matches('/');
+    let (route, id) = path.split_at(path.len().min(1));
+    let Ok(id) = id.parse::<i64>() else {
+        return status(StatusCode::BAD_REQUEST);
+    };
+    let (file, mime) = match route {
+        "t" => match state.catalog_dir() {
+            Some(dir) => (thumbs::thumb_path(&dir, id), "image/jpeg"),
+            None => return status(StatusCode::NOT_FOUND),
+        },
+        "o" => match file_path(&state, id) {
+            Ok(file) => {
+                let mime = match paths::ext_lower(&file.to_string_lossy()).as_str() {
+                    "jpg" | "jpeg" | "jpe" | "jfif" => "image/jpeg",
+                    "png" => "image/png",
+                    "gif" => "image/gif",
+                    "webp" => "image/webp",
+                    "bmp" => "image/bmp",
+                    "avif" => "image/avif",
+                    "svg" => "image/svg+xml",
+                    _ => return status(StatusCode::UNSUPPORTED_MEDIA_TYPE),
+                };
+                (file, mime)
+            }
+            Err(_) => return status(StatusCode::NOT_FOUND),
+        },
+        _ => return status(StatusCode::NOT_FOUND),
+    };
+    match std::fs::read(&file) {
+        Ok(bytes) => Response::builder()
+            .header(header::CONTENT_TYPE, mime)
+            // Thumbnail URLs carry a version query, so they can be cached for good.
+            .header(header::CACHE_CONTROL, "max-age=31536000, immutable")
+            .body(bytes)
+            .unwrap(),
+        Err(_) => status(StatusCode::NOT_FOUND),
+    }
+}
+
+fn status(code: StatusCode) -> Response<Vec<u8>> {
+    Response::builder().status(code).body(Vec::new()).unwrap()
 }
 
 #[tauri::command]
@@ -425,16 +578,25 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::load())
+        .register_asynchronous_uri_scheme_protocol("media", |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
+            std::thread::spawn(move || responder.respond(serve_media(&app, &request)));
+        })
         .invoke_handler(tauri::generate_handler![
             get_setup,
             free_space,
             set_catalog_dir,
             list_volumes,
             add_volume,
+            rename_volume,
             remove_volume,
             start_scan,
             cancel_scan,
+            jobs_status,
+            set_jobs_paused,
             query_files,
+            file_details,
+            list_cameras,
             open_file,
             reveal_file,
         ])

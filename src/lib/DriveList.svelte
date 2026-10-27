@@ -1,7 +1,15 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { ask } from "@tauri-apps/plugin-dialog";
-  import { api, onScanFinished, onScanProgress, type ScanProgress, type Volume } from "./api";
+  import {
+    api,
+    onJobsProgress,
+    onScanFinished,
+    onScanProgress,
+    type JobsStatus,
+    type ScanProgress,
+    type Volume,
+  } from "./api";
   import { formatBytes, formatCount, formatDate } from "./format";
 
   let {
@@ -17,10 +25,34 @@
   } = $props();
 
   let progress = $state<Record<number, ScanProgress>>({});
+  let jobs = $state<JobsStatus>({ paused: false, volumes: [] });
+  let editing = $state<number | null>(null);
+  let editLabel = $state("");
   let lastChangeNotice = 0;
 
   const catalogued = $derived(volumes.filter((v) => v.id !== null));
   const available = $derived(volumes.filter((v) => v.id === null));
+  const jobsDone = $derived(jobs.volumes.reduce((n, p) => n + p.done, 0));
+  const jobsTotal = $derived(jobs.volumes.reduce((n, p) => n + p.total, 0));
+  const labelOf = (id: number) => volumes.find((v) => v.id === id)?.label ?? "Drive";
+
+  function startRename(v: Volume) {
+    editing = v.id;
+    editLabel = v.label;
+  }
+
+  async function saveRename() {
+    if (editing === null) return;
+    const id = editing;
+    editing = null;
+    await run(() => api.renameVolume(id, editLabel));
+    notifyChanged(true);
+  }
+
+  function focus(node: HTMLInputElement) {
+    node.focus();
+    node.select();
+  }
 
   async function refresh() {
     try {
@@ -41,9 +73,11 @@
 
   onMount(() => {
     refresh();
+    api.jobsStatus().then((s) => (jobs = s));
     // Picks up drives being plugged in or removed.
     const timer = setInterval(refresh, 5000);
     const unlisten = [
+      onJobsProgress((s) => (jobs = s)),
       onScanProgress((p) => {
         progress[p.volumeId] = p;
         notifyChanged();
@@ -102,11 +136,30 @@
   {#each catalogued as v (v.id)}
     {@const p = progress[v.id!]}
     <div class="drive" class:offline={!v.online}>
-      <button class="item" class:active={selected === v.id} onclick={() => (selected = v.id)}>
-        <span class="dot" class:on={v.online} title={v.online ? "Plugged in" : "Offline"}></span>
-        <span class="name">{v.label}</span>
-        <span class="count">{formatCount(v.fileCount)}</span>
-      </button>
+      {#if editing === v.id}
+        <form class="item static" onsubmit={(e) => (e.preventDefault(), saveRename())}>
+          <input
+            class="rename"
+            bind:value={editLabel}
+            use:focus
+            onblur={saveRename}
+            onkeydown={(e) => e.key === "Escape" && (editing = null)}
+            aria-label="Drive name"
+          />
+        </form>
+      {:else}
+        <button
+          class="item"
+          class:active={selected === v.id}
+          onclick={() => (selected = v.id)}
+          ondblclick={() => startRename(v)}
+          title={`${v.mount ?? ""} — double-click to rename`}
+        >
+          <span class="dot" class:on={v.online} title={v.online ? "Plugged in" : "Offline"}></span>
+          <span class="name">{v.label}</span>
+          <span class="count">{formatCount(v.fileCount)}</span>
+        </button>
+      {/if}
       <div class="details muted">
         {#if v.online}{usage(v)} · {v.fsType}{v.rotational ? " · HDD" : ""}{:else}Offline — plug in to scan or open files{/if}
       </div>
@@ -125,6 +178,7 @@
         </div>
         <div class="actions">
           <button disabled={!v.online} onclick={() => run(() => api.startScan(v.id!))}>Rescan</button>
+          <button onclick={() => startRename(v)}>Rename</button>
           <button class="danger" onclick={() => remove(v)}>Remove</button>
         </div>
       {/if}
@@ -143,6 +197,26 @@
         <div class="actions"><button onclick={() => add(v)}>Add &amp; scan</button></div>
       </div>
     {/each}
+  {/if}
+
+  {#if jobs.volumes.length || jobs.paused}
+    <section class="jobs">
+      <h2>Thumbnails &amp; details</h2>
+      {#if jobs.volumes.length}
+        <div class="details">
+          {formatCount(jobsDone)} of {formatCount(jobsTotal)} files{jobs.paused ? " · paused" : ""}
+        </div>
+        <progress max={jobsTotal} value={jobsDone}></progress>
+        {#each jobs.volumes as p (p.volumeId)}
+          <div class="details muted">{labelOf(p.volumeId)}: {formatCount(p.done)} / {formatCount(p.total)}</div>
+        {/each}
+      {:else}
+        <div class="details muted">Paused</div>
+      {/if}
+      <div class="actions">
+        <button onclick={() => run(() => api.setJobsPaused(!jobs.paused))}>{jobs.paused ? "Resume" : "Pause"}</button>
+      </div>
+    </section>
   {/if}
 </nav>
 
@@ -227,5 +301,24 @@
   .actions button {
     font-size: 12px;
     padding: 2px 8px;
+  }
+  .rename {
+    width: 100%;
+  }
+  .jobs {
+    margin-top: 16px;
+    padding-top: 4px;
+    border-top: 1px solid var(--border);
+  }
+  .jobs .details {
+    padding-left: 8px;
+  }
+  .jobs .actions {
+    padding-left: 8px;
+  }
+  progress {
+    width: calc(100% - 16px);
+    margin: 4px 8px;
+    accent-color: var(--accent);
   }
 </style>
