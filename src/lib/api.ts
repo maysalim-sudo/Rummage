@@ -2,7 +2,7 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-export type MediaKind = "image" | "video" | "raw";
+export type MediaKind = "image" | "video" | "raw" | "design";
 export type Sort = "newest" | "oldest" | "name" | "largest";
 
 export interface SetupInfo {
@@ -157,7 +157,22 @@ export const api = {
   listCameras: () => invoke<CameraCount[]>("list_cameras"),
   openFile: (id: number) => invoke<void>("open_file", { id }),
   revealFile: (id: number) => invoke<void>("reveal_file", { id }),
+  openInVlc: (id: number) => invoke<void>("open_in_vlc", { id }),
 };
+
+interface MediaServer {
+  port: number;
+  token: string;
+}
+
+let mediaServer: Promise<MediaServer | null> | null = null;
+
+/** URL that streams a video (with seeking) from the local video server, or null if it isn't running. */
+export async function videoUrl(id: number): Promise<string | null> {
+  mediaServer ??= invoke<MediaServer | null>("media_server");
+  const server = await mediaServer;
+  return server ? `http://127.0.0.1:${server.port}/v/${id}?t=${server.token}` : null;
+}
 
 /** Thumbnail URL (served from the catalog by the Rust `media://` protocol), or null. */
 export function thumbUrl(row: Pick<FileRow, "id" | "thumb">): string | null {
@@ -167,9 +182,16 @@ export function thumbUrl(row: Pick<FileRow, "id" | "thumb">): string | null {
 /** Formats the browser can show directly as a full-size preview. */
 const PREVIEWABLE = new Set(["jpg", "jpeg", "jpe", "jfif", "png", "gif", "webp", "bmp", "avif", "svg"]);
 
-/** URL of the original file for the preview panel, or null if it cannot be shown. */
-export function originalUrl(row: Pick<FileRow, "id" | "ext" | "absPath">): string | null {
-  return row.absPath && PREVIEWABLE.has(row.ext) ? convertFileSrc(`o${row.id}`, "media") : null;
+/** Formats the backend renders into a large preview (cached, so it also works offline later). */
+const RENDERED_PREVIEW = new Set([
+  "heic", "heif", "psd", "psb", "tga", "exr", "hdr", "jxl", "tif", "tiff", "ai", "eps", "pdf", "fig",
+]);
+
+/** URL of a large preview for the preview panel, or null if there is none. */
+export function previewUrl(row: Pick<FileRow, "id" | "ext" | "absPath">): string | null {
+  if (row.absPath && PREVIEWABLE.has(row.ext)) return convertFileSrc(`o${row.id}`, "media");
+  if (RENDERED_PREVIEW.has(row.ext)) return convertFileSrc(`p${row.id}`, "media");
+  return null;
 }
 
 export const onJobsProgress = (cb: (s: JobsStatus) => void): Promise<UnlistenFn> =>

@@ -64,7 +64,7 @@
     }
   }
 
-  const kindLabel = { image: "Image", video: "Video", raw: "RAW" } as const;
+  const kindLabel = { image: "Image", video: "Video", raw: "RAW", design: "Design" } as const;
 
   function size(row: FileRow) {
     return row.width && row.height ? `${row.width}×${row.height}` : "";
@@ -202,6 +202,9 @@
   }
   .badge.raw {
     background: var(--badge-raw);
+  }
+  .badge.design {
+    background: var(--badge-design);
   }
   .empty {
     position: absolute;

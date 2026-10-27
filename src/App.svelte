@@ -230,6 +230,7 @@
           <option value="image">Images</option>
           <option value="video">Videos</option>
           <option value="raw">RAW photos</option>
+          <option value="design">Design files (AI, EPS, PDF, Figma)</option>
         </select>
         <select bind:value={minSide} aria-label="Resolution">
           <option value={null}>Any resolution</option>

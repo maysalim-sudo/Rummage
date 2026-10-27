@@ -115,6 +115,11 @@ CREATE INDEX files_camera ON files(camera) WHERE camera IS NOT NULL;
 -- reading table rows matters a lot when the catalog sits on an HDD.
 DROP INDEX files_dir;
 CREATE INDEX files_dir ON files(volume_id, dir, missing);
+"#, r#"
+-- Thumbnails for these formats now come from ImageMagick; redo them (HEIC got the
+-- portrait depth mask from ffmpeg, the others mostly failed).
+UPDATE files SET processed_scan = 0
+WHERE ext IN ('heic', 'heif', 'avif', 'psd', 'psb', 'svg', 'tga', 'exr', 'hdr', 'jxl');
 "#];
 
 /// Opens (creating if needed) the catalog in `dir` and brings its schema up to date.

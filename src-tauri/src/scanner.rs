@@ -6,7 +6,7 @@
 //! `missing` (kept, not deleted, so tags and history survive a move).
 
 use crate::db;
-use crate::media_kind::MediaKind;
+use crate::media_kind::{self, MediaKind};
 use crate::paths;
 use anyhow::{bail, Result};
 use jwalk::{Parallelism, WalkDir};
@@ -22,9 +22,6 @@ const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
 /// Folder names never worth scanning (trash, OS internals, tooling). Hidden folders
 /// (names starting with '.', e.g. ~/.config, ~/.cache, .git) are skipped too.
 const SKIP_DIRS: &[&str] = &["$recycle.bin", "system volume information", "lost+found", "node_modules"];
-
-/// Extensions shared by MPEG transport-stream video and TypeScript source code.
-const TRANSPORT_STREAM_EXTS: &[&str] = &["ts", "mts", "m2ts"];
 
 #[derive(Clone, Debug, Default, Serialize, PartialEq, Eq)]
 pub struct ScanStats {
@@ -167,7 +164,7 @@ fn walk_roots(
                 stats.skipped += 1;
                 continue;
             };
-            if TRANSPORT_STREAM_EXTS.contains(&ext.as_str()) && !is_transport_stream(&path) {
+            if media_kind::SNIFFED_EXTS.contains(&ext.as_str()) && !media_kind::sniff(&ext, &read_head(&path)) {
                 rejected.push(rel);
                 continue;
             }
@@ -202,14 +199,14 @@ fn should_skip_dir(name: &str) -> bool {
     name.starts_with('.') || SKIP_DIRS.contains(&name.to_lowercase().as_str())
 }
 
-/// MPEG-TS packets start with the sync byte 0x47; Blu-ray/AVCHD (.m2ts, .mts) put a
-/// 4-byte timestamp before it. TypeScript source files never start like that.
-fn is_transport_stream(path: &Path) -> bool {
+/// The first 1 KB of a file (less if it is shorter; empty if unreadable).
+fn read_head(path: &Path) -> Vec<u8> {
     use std::io::Read;
-    let mut head = [0u8; 5];
-    std::fs::File::open(path)
-        .and_then(|mut f| f.read_exact(&mut head))
-        .is_ok_and(|_| head[0] == 0x47 || head[4] == 0x47)
+    let mut head = Vec::with_capacity(1024);
+    if let Ok(file) = std::fs::File::open(path) {
+        let _ = file.take(1024).read_to_end(&mut head);
+    }
+    head
 }
 
 /// Drops catalog entries that the current rules no longer treat as media (files in
@@ -387,6 +384,8 @@ mod tests {
         let mut m2ts = vec![0u8; 384];
         m2ts[4] = 0x47;
         fs::write(d.join("Videos/00001.MTS"), &m2ts).unwrap();
+        fs::write(d.join("code/someone@example.ai"), b"From: someone").unwrap();
+        fs::write(d.join("Videos/logo.ai"), b"%PDF-1.6\n...").unwrap();
 
         // Entries a previous version catalogued but the rules now exclude.
         conn.execute_batch(
@@ -397,7 +396,7 @@ mod tests {
         .unwrap();
 
         let (_, stats) = scan(&mut conn, d, &[""]);
-        assert_eq!((stats.files_seen, stats.removed), (2, 0));
+        assert_eq!((stats.files_seen, stats.removed), (3, 0));
         let names: Vec<String> = conn
             .prepare("SELECT name FROM files ORDER BY name")
             .unwrap()
@@ -405,7 +404,7 @@ mod tests {
             .unwrap()
             .collect::<Result<_, _>>()
             .unwrap();
-        assert_eq!(names, ["00001.MTS", "broadcast.ts"]);
+        assert_eq!(names, ["00001.MTS", "broadcast.ts", "logo.ai"]);
     }
 
     #[test]

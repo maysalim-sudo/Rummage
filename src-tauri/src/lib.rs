@@ -8,6 +8,7 @@ mod query;
 mod scanner;
 mod thumbs;
 mod tools;
+mod video;
 mod volumes;
 
 use rusqlite::{params, Connection, OptionalExtension};
@@ -15,7 +16,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use tauri::http::{header, Request, Response, StatusCode};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
@@ -46,6 +47,8 @@ struct AppState {
     /// Where each catalogued volume is mounted right now (refreshed by `list_volumes`).
     mounts: Mutex<HashMap<i64, Mounted>>,
     jobs: Arc<jobs::Jobs>,
+    /// Local HTTP server for the video player; started once at launch.
+    media_server: OnceLock<video::MediaServer>,
 }
 
 impl AppState {
@@ -524,7 +527,8 @@ fn file_path(state: &AppState, id: i64) -> CmdResult<PathBuf> {
 
 // ---------- media:// protocol ----------
 
-/// Serves `media://localhost/t<id>` (thumbnail from the cache) and
+/// Serves `media://localhost/t<id>` (thumbnail from the cache),
+/// `media://localhost/p<id>` (large preview for HEIC, PSD, PDF…; made on demand, then cached) and
 /// `media://localhost/o<id>` (the original file, for the preview panel; drive must be plugged in).
 fn serve_media(app: &AppHandle, request: &Request<Vec<u8>>) -> Response<Vec<u8>> {
     let state = app.state::<AppState>();
@@ -537,6 +541,10 @@ fn serve_media(app: &AppHandle, request: &Request<Vec<u8>>) -> Response<Vec<u8>>
         "t" => match state.catalog_dir() {
             Some(dir) => (thumbs::thumb_path(&dir, id), "image/jpeg"),
             None => return status(StatusCode::NOT_FOUND),
+        },
+        "p" => match make_preview(&state, id) {
+            Ok(file) => (file, "image/jpeg"),
+            Err(code) => return status(code),
         },
         "o" => match file_path(&state, id) {
             Ok(file) => {
@@ -567,6 +575,30 @@ fn serve_media(app: &AppHandle, request: &Request<Vec<u8>>) -> Response<Vec<u8>>
     }
 }
 
+/// Returns the cached large preview, rendering it first if needed (drive must be plugged in).
+fn make_preview(state: &AppState, id: i64) -> Result<PathBuf, StatusCode> {
+    let dir = state.catalog_dir().ok_or(StatusCode::NOT_FOUND)?;
+    let cached = thumbs::preview_path(&dir, id);
+    if cached.is_file() {
+        return Ok(cached);
+    }
+    let path = file_path(state, id).map_err(|_| StatusCode::NOT_FOUND)?;
+    let ext = paths::ext_lower(&path.to_string_lossy());
+    let jpeg = if ext == "fig" {
+        thumbs::from_fig(&path, thumbs::PREVIEW_SIZE)
+    } else if thumbs::MAGICK_EXTS.contains(&ext.as_str()) {
+        thumbs::from_magick(&path, &ext, thumbs::PREVIEW_SIZE)
+    } else {
+        std::fs::read(&path).map_err(Into::into).and_then(|bytes| {
+            let orientation = meta::image_info(&bytes).orientation;
+            thumbs::from_image_bytes(&bytes, orientation, thumbs::PREVIEW_SIZE)
+        })
+    }
+    .map_err(|_| StatusCode::UNSUPPORTED_MEDIA_TYPE)?;
+    thumbs::write_cached(&cached, &jpeg).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(cached)
+}
+
 fn status(code: StatusCode) -> Response<Vec<u8>> {
     Response::builder().status(code).body(Vec::new()).unwrap()
 }
@@ -583,12 +615,57 @@ fn reveal_file(app: AppHandle, state: State<AppState>, id: i64) -> CmdResult<()>
     app.opener().reveal_item_in_dir(path).map_err(err)
 }
 
+/// Port and token of the local video server, for building `<video>` URLs.
+#[tauri::command]
+fn media_server(state: State<AppState>) -> Option<video::MediaServer> {
+    state.media_server.get().cloned()
+}
+
+#[tauri::command]
+fn open_in_vlc(state: State<AppState>, id: i64) -> CmdResult<()> {
+    let path = file_path(&state, id)?;
+    let mut child = tools::command(&vlc_binary()).arg(&path).spawn().map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            "VLC is not installed (or not on the PATH)".to_string()
+        } else {
+            format!("cannot start VLC: {e}")
+        }
+    })?;
+    // Reap the process when VLC closes so it doesn't linger as a zombie.
+    std::thread::spawn(move || child.wait());
+    Ok(())
+}
+
+fn vlc_binary() -> String {
+    #[cfg(windows)]
+    for dir in ["ProgramFiles", "ProgramFiles(x86)"] {
+        if let Ok(base) = std::env::var(dir) {
+            let exe = PathBuf::from(base).join("VideoLAN").join("VLC").join("vlc.exe");
+            if exe.is_file() {
+                return exe.to_string_lossy().to_string();
+            }
+        }
+    }
+    "vlc".to_string()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::load())
+        .setup(|app| {
+            let handle = app.handle().clone();
+            let resolve: video::Resolve = Arc::new(move |id| file_path(&handle.state::<AppState>(), id).ok());
+            match video::start(resolve) {
+                Ok(server) => {
+                    let _ = app.state::<AppState>().media_server.set(server);
+                }
+                Err(e) => eprintln!("{e:#}"),
+            }
+            Ok(())
+        })
         .register_asynchronous_uri_scheme_protocol("media", |ctx, request, responder| {
             let app = ctx.app_handle().clone();
             std::thread::spawn(move || responder.respond(serve_media(&app, &request)));
@@ -611,6 +688,8 @@ pub fn run() {
             list_cameras,
             open_file,
             reveal_file,
+            media_server,
+            open_in_vlc,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Media Catalog");

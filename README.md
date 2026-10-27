@@ -23,7 +23,16 @@ Built with Tauri 2 (Rust core) and Svelte 5. The full architecture and roadmap a
   keyboard navigable), filters (type, resolution, orientation, camera, video length,
   date range), and an inspector with a full-size preview and all details.
 
+- HEIC, AVIF, PSD, SVG, TGA, EXR and design files (AI, EPS, PDF, Figma `.fig`) get
+  thumbnails and large previews through ImageMagick (Figma: the thumbnail inside the file).
+  Shared extensions (`.ts`, `.ai`, `.pdf`…) are checked by content before cataloguing.
+- Videos play in the preview panel (streamed with seeking by a token-protected local HTTP
+  server on 127.0.0.1), with an "Open in VLC" button for formats the webview can't play.
+
 Not yet: RAW thumbnails (milestone 6) and video hover-scrub previews (poster frames only).
+
+Runtime tools: `ffmpeg`/`ffprobe` and ImageMagick 7 (`magick`, with Ghostscript for AI/EPS/PDF)
+must be on the PATH for now; installers will bundle them (milestone 8).
 
 ## Development
 

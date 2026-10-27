@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, originalUrl, thumbUrl, type FileDetails } from "./api";
+  import { api, previewUrl, thumbUrl, videoUrl, type FileDetails } from "./api";
   import { formatBytes, formatDate, formatDuration, formatTaken } from "./format";
 
   let {
@@ -15,7 +15,9 @@
   } = $props();
 
   let details = $state<FileDetails | null>(null);
-  let originalFailed = $state(false);
+  let previewFailed = $state(false);
+  let video = $state<{ id: number; url: string } | null>(null);
+  let videoFailed = $state(false);
 
   // Reload when the selection changes, and while processing fills in details.
   $effect(() => {
@@ -30,11 +32,25 @@
   });
   $effect(() => {
     fileId;
-    originalFailed = false;
+    previewFailed = false;
+    videoFailed = false;
   });
 
   const d = $derived(details?.id === fileId ? details : null);
-  const preview = $derived(d ? (!originalFailed && originalUrl(d)) || thumbUrl(d) : null);
+  const isVideo = $derived(d?.kind === "video");
+  const preview = $derived(d ? (!previewFailed && previewUrl(d)) || thumbUrl(d) : null);
+
+  // Videos on a plugged-in drive play right in the panel.
+  $effect(() => {
+    const id = fileId;
+    if (!isVideo || !d?.absPath) {
+      video = null;
+      return;
+    }
+    videoUrl(id).then((url) => {
+      if (id === fileId) video = url ? { id, url } : null;
+    });
+  });
   const megapixels = $derived(d?.width && d?.height ? ((d.width * d.height) / 1e6).toFixed(1) : null);
   const exposure = $derived(
     d
@@ -60,13 +76,27 @@
 
 <aside class="inspector">
   {#if d}
-    <div class="preview">
-      {#if preview}
-        <img src={preview} alt={d.name} onerror={() => (originalFailed = true)} />
+    <div class="preview" class:player={video && !videoFailed}>
+      {#if video && video.id === d.id && !videoFailed}
+        {#key video.url}
+          <!-- svelte-ignore a11y_media_has_caption -->
+          <video
+            src={video.url}
+            poster={thumbUrl(d) ?? undefined}
+            controls
+            preload="metadata"
+            onerror={() => (videoFailed = true)}
+          ></video>
+        {/key}
+      {:else if preview}
+        <img src={preview} alt={d.name} onerror={() => (previewFailed = true)} />
       {:else}
         <span class="muted">{d.processed ? "No preview available" : "Preview not made yet"}</span>
       {/if}
     </div>
+    {#if isVideo && videoFailed}
+      <p class="muted note">This video's format can't play here. Use “Open in VLC”.</p>
+    {/if}
 
     <h3 title={d.name}>{d.name}</h3>
 
@@ -123,6 +153,9 @@
     <div class="actions">
       <button class="primary" disabled={!d.absPath} onclick={() => act(api.openFile)}>Open</button>
       <button disabled={!d.absPath} onclick={() => act(api.revealFile)}>Show in folder</button>
+      {#if isVideo}
+        <button disabled={!d.absPath} onclick={() => act(api.openInVlc)}>Open in VLC</button>
+      {/if}
     </div>
     {#if !d.absPath}
       <p class="muted">Plug in “{labels.get(d.volumeId)}” to open this file.</p>
@@ -146,10 +179,21 @@
     border-radius: 6px;
     overflow: hidden;
   }
-  .preview img {
+  .preview img,
+  .preview video {
     width: 100%;
     height: 100%;
     object-fit: contain;
+  }
+  .preview.player {
+    background: #000;
+  }
+  .note {
+    margin: 6px 0 0;
+    font-size: 12px;
+  }
+  .actions {
+    flex-wrap: wrap;
   }
   h3 {
     margin: 10px 0 6px;

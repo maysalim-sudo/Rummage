@@ -77,7 +77,7 @@
     }
   }
 
-  const kindIcon = { image: "🖼", video: "🎬", raw: "📷" } as const;
+  const kindIcon = { image: "🖼", video: "🎬", raw: "📷", design: "✏️" } as const;
 </script>
 
 <div
@@ -116,6 +116,8 @@
               <span class="chip">{formatDuration(row.durationMs)}</span>
             {:else if row.kind === "raw"}
               <span class="chip raw">RAW</span>
+            {:else if row.kind === "design"}
+              <span class="chip design">{row.ext.toUpperCase()}</span>
             {/if}
           </div>
           <div class="caption">
@@ -194,6 +196,9 @@
   }
   .chip.raw {
     background: var(--badge-raw);
+  }
+  .chip.design {
+    background: var(--badge-design);
   }
   .caption {
     display: flex;

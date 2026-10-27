@@ -229,26 +229,11 @@ fn process_file(catalog_dir: &Path, mount: &Path, row: &Pending) -> Outcome {
             let seek = out.info.duration_ms.map(|ms| (ms as f64 / 1000.0 * 0.1).min(10.0));
             thumbs::from_ffmpeg(&path, seek).or_else(|_| thumbs::from_ffmpeg(&path, None))
         }
-        Some(kind) => {
-            let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-            if size > MAX_IN_MEMORY {
-                thumbs::from_ffmpeg(&path, None)
-            } else {
-                match std::fs::read(&path) {
-                    Err(e) => Err(e.into()),
-                    Ok(bytes) => {
-                        out.info = meta::image_info(&bytes);
-                        if kind == MediaKind::Raw {
-                            Err(anyhow::anyhow!("RAW previews arrive with RAW support (milestone 6)"))
-                        } else {
-                            // HEIC, AVIF and similar fall back to ffmpeg.
-                            thumbs::from_image_bytes(&bytes, out.info.orientation)
-                                .or_else(|_| thumbs::from_ffmpeg(&path, None))
-                        }
-                    }
-                }
-            }
-        }
+        Some(MediaKind::Design) => match paths::ext_lower(&row.rel).as_str() {
+            "fig" => thumbs::from_fig(&path, thumbs::THUMB_SIZE),
+            ext => thumbs::from_magick(&path, ext, thumbs::THUMB_SIZE),
+        },
+        Some(kind) => image_thumb(&path, kind, &mut out.info),
         None => Err(anyhow::anyhow!("unknown file type")),
     };
     match thumb.and_then(|jpeg| thumbs::save(catalog_dir, row.id, &jpeg)) {
@@ -261,6 +246,26 @@ fn process_file(catalog_dir: &Path, mount: &Path, row: &Pending) -> Outcome {
         error.truncate(300);
     }
     out
+}
+
+/// Thumbnail for photos and RAW files; fills in `info` from the file's EXIF.
+fn image_thumb(path: &Path, kind: MediaKind, info: &mut MediaInfo) -> Result<Vec<u8>> {
+    let ext = paths::ext_lower(&path.to_string_lossy());
+    let size = std::fs::metadata(path)?.len();
+    if size <= MAX_IN_MEMORY {
+        let bytes = std::fs::read(path)?;
+        *info = meta::image_info(&bytes);
+        if kind == MediaKind::Raw {
+            anyhow::bail!("RAW previews arrive with RAW support (milestone 6)");
+        }
+        if !thumbs::MAGICK_EXTS.contains(&ext.as_str()) {
+            if let Ok(jpeg) = thumbs::from_image_bytes(&bytes, info.orientation, thumbs::THUMB_SIZE) {
+                return Ok(jpeg);
+            }
+        }
+    }
+    // HEIC, PSD, SVG… (and anything the built-in decoder failed on); ffmpeg as a last resort.
+    thumbs::from_magick(path, &ext, thumbs::THUMB_SIZE).or_else(|e| thumbs::from_ffmpeg(path, None).map_err(|_| e))
 }
 
 fn write_results(conn: &Connection, results: &[(i64, i64, Outcome)]) -> Result<()> {
