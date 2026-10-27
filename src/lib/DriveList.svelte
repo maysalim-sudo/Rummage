@@ -55,6 +55,8 @@
   const jobsDone = $derived(jobs.volumes.reduce((n, p) => n + p.done, 0));
   const jobsTotal = $derived(jobs.volumes.reduce((n, p) => n + p.total, 0));
   const labelOf = (id: number) => volumes.find((v) => v.id === id)?.label ?? "Drive";
+  const percent = (p: { done: number; total: number }) =>
+    `${p.total ? Math.floor((p.done / p.total) * 100) : 100}%`;
 
   function startRename(v: Volume) {
     editing = v.id;
@@ -247,11 +249,19 @@
       <h2>Thumbnails &amp; details</h2>
       {#if jobs.volumes.length}
         <div class="details">
-          {formatCount(jobsDone)} of {formatCount(jobsTotal)} files{jobs.paused ? " · paused" : ""}
+          {formatCount(jobsDone)} of {formatCount(jobsTotal)} files done{jobs.paused ? " · paused" : ""}
         </div>
-        <progress max={jobsTotal} value={jobsDone}></progress>
         {#each jobs.volumes as p (p.volumeId)}
-          <div class="details muted">{labelOf(p.volumeId)}: {formatCount(p.done)} / {formatCount(p.total)}</div>
+          <div class="job" class:queued={p.state === "queued"}>
+            <div class="job-line">
+              <span class="job-name">{labelOf(p.volumeId)}</span>
+              <span class="muted">
+                {p.state === "queued" ? "queued · " : ""}{percent(p)}
+              </span>
+            </div>
+            <progress max={p.total} value={p.done}></progress>
+            <div class="muted job-count">{formatCount(p.done)} of {formatCount(p.total)}</div>
+          </div>
         {/each}
       {:else}
         <div class="details muted">Paused</div>
@@ -377,9 +387,30 @@
   .jobs .actions {
     padding-left: 8px;
   }
+  .job {
+    padding: 6px 8px 0;
+  }
+  .job-line {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 12px;
+  }
+  .job-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .job-count {
+    font-size: 11px;
+  }
+  .job.queued progress {
+    opacity: 0.5;
+  }
   progress {
-    width: calc(100% - 16px);
-    margin: 4px 8px;
+    width: 100%;
+    height: 6px;
+    margin: 2px 0;
     accent-color: var(--accent);
   }
 </style>

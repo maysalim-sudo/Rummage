@@ -29,12 +29,22 @@ pub struct Target {
     pub rotational: bool,
 }
 
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ProgressState {
+    Running,
+    /// Waiting for another drive on the same physical disk.
+    Queued,
+}
+
+/// Overall progress of one drive: `done` counts every processed file, not just this session's.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Progress {
     pub volume_id: i64,
     pub done: u64,
     pub total: u64,
+    pub state: ProgressState,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -95,13 +105,24 @@ impl Jobs {
 
     fn run_disk(&self, catalog_dir: &Path, targets: &[Target], emit: &Emit) -> Result<()> {
         let conn = db::open(catalog_dir)?;
+        // List every drive of this disk up front, so the waiting ones show as queued.
         for target in targets {
-            let result = self.run_volume(&conn, catalog_dir, target, emit);
+            let progress = count_progress(&conn, target.volume_id, ProgressState::Queued)?;
+            if progress.done < progress.total {
+                self.progress.lock().unwrap().insert(target.volume_id, progress);
+            }
+        }
+        emit(&self.status());
+
+        let mut result = Ok(());
+        for target in targets {
+            if result.is_ok() {
+                result = self.run_volume(&conn, catalog_dir, target, emit);
+            }
             self.progress.lock().unwrap().remove(&target.volume_id);
             emit(&self.status());
-            result?;
         }
-        Ok(())
+        result
     }
 
     fn run_volume(&self, conn: &Connection, catalog_dir: &Path, target: &Target, emit: &Emit) -> Result<()> {
@@ -114,12 +135,11 @@ impl Jobs {
 
         // Re-count after finishing: a rescan may have queued more files meanwhile.
         loop {
-            let total: i64 = conn.query_row(&format!("SELECT COUNT(*) {pending_sql}"), [target.volume_id], |r| r.get(0))?;
-            if total == 0 {
+            let mut progress = count_progress(conn, target.volume_id, ProgressState::Running)?;
+            if progress.done >= progress.total {
                 self.idle.lock().unwrap().insert(target.volume_id);
                 return Ok(());
             }
-            let mut progress = Progress { volume_id: target.volume_id, done: 0, total: total as u64 };
             self.progress.lock().unwrap().insert(target.volume_id, progress.clone());
             emit(&self.status());
 
@@ -154,6 +174,16 @@ impl Jobs {
             }
         }
     }
+}
+
+/// Media files on the volume and how many of them are already processed.
+fn count_progress(conn: &Connection, volume_id: i64, state: ProgressState) -> Result<Progress> {
+    let (total, done): (i64, Option<i64>) = conn.query_row(
+        "SELECT COUNT(*), SUM(processed_scan >= changed_scan) FROM files WHERE volume_id = ?1 AND missing = 0",
+        [volume_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    Ok(Progress { volume_id, done: done.unwrap_or(0) as u64, total: total as u64, state })
 }
 
 struct Pending {
@@ -287,7 +317,17 @@ mod tests {
 
         let jobs = Arc::new(Jobs::default());
         let target = Target { volume_id: 1, mount: d.to_path_buf(), disk: "test".into(), rotational: false };
-        jobs.run_volume(&conn, catalog.path(), &target, &(Arc::new(|_: &Status| {}) as Emit)).unwrap();
+        let seen = Arc::new(Mutex::new(Vec::<Progress>::new()));
+        let log = seen.clone();
+        let emit: Emit = Arc::new(move |s: &Status| log.lock().unwrap().extend(s.volumes.iter().cloned()));
+        jobs.run_disk(catalog.path(), std::slice::from_ref(&target), &emit).unwrap();
+
+        // Progress is overall: it starts queued at 0 of all files and ends at all of them.
+        let seen = seen.lock().unwrap();
+        let files = if video { 3 } else { 2 };
+        assert_eq!(seen.first().map(|p| (p.state, p.done, p.total)), Some((ProgressState::Queued, 0, files)));
+        assert_eq!(seen.last().map(|p| (p.state, p.done, p.total)), Some((ProgressState::Running, files, files)));
+        assert!(jobs.status().volumes.is_empty());
 
         let row = |name: &str| -> (Option<i64>, Option<i64>, i64, Option<String>, Option<i64>) {
             conn.query_row(

@@ -118,10 +118,13 @@ export interface CameraCount {
   count: number;
 }
 
+/** Overall progress of one drive: `done` counts every processed file, not just this session's. */
 export interface JobProgress {
   volumeId: number;
   done: number;
   total: number;
+  /** "queued": waiting for another drive on the same physical disk. */
+  state: "running" | "queued";
 }
 
 export interface JobsStatus {
