@@ -1,11 +1,11 @@
 [package]
-name = "media-catalog"
+name = "rummage"
 version = "0.1.0"
 description = "Catalog and browse images and videos across all your drives"
 edition = "2021"
 
 [lib]
-name = "media_catalog_lib"
+name = "rummage_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

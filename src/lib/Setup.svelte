@@ -39,7 +39,7 @@
 
 <div class="setup">
   <div class="card">
-    <h1>Welcome to Media Catalog</h1>
+    <h1>Welcome to Rummage</h1>
     <p>
       Choose where to keep the catalog. It stores the file list and, later, thumbnails and search
       data for all your drives. Pick a fast SSD with plenty of free space.

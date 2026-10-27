@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    media_catalog_lib::run()
+    rummage_lib::run()
 }

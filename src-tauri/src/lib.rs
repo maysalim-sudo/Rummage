@@ -692,5 +692,5 @@ pub fn run() {
             open_in_vlc,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Media Catalog");
+        .expect("error while running Rummage");
 }

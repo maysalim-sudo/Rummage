@@ -1,4 +1,4 @@
-# Media Catalog
+# Rummage
 
 A desktop app (Kubuntu first, Windows too) that indexes the images, RAW photos and
 videos on all your drives into one searchable catalog. You can browse it even when a
@@ -60,6 +60,6 @@ target-dir = "/home/<you>/.cache/media-catalog-target"
 
 ## Where data lives
 
-- Settings: `~/.config/media-catalog/config.json` (`%APPDATA%\media-catalog` on Windows)
-- Catalog: the folder chosen at first run (default `~/.local/share/media-catalog`)
+- Settings: `~/.config/rummage/config.json` (`%APPDATA%\rummage` on Windows)
+- Catalog: the folder chosen at first run (default `~/.local/share/rummage`)
 - On each added drive: a small `.mediacat-id` file at the root

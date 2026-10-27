@@ -1,4 +1,4 @@
-# Media Catalog — architecture plan (discussion draft)
+# Rummage — architecture plan
 
 ## Context
 User keeps images/videos on ~6 HDDs/SSDs (mixed NTFS/exFAT/ext4, some shared with Windows) and wastes time hunting through them. Goal: one desktop app (Kubuntu first, Windows too) that indexes every drive into a single searchable catalog — browsable even when a drive is unplugged — with filters, categories, move/copy, duplicates, tags, RAW support and local AI "search by description". Scale: **>1M files**, so speed and incremental work are design drivers.

@@ -2192,31 +2192,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "media-catalog"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "dirs",
- "image",
- "imagesize",
- "jwalk",
- "kamadak-exif",
- "rusqlite",
- "serde",
- "serde_json",
- "sysinfo",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
- "tempfile",
- "tiny_http",
- "uuid",
- "windows-sys 0.61.2",
- "zip",
-]
-
-[[package]]
 name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3125,6 +3100,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "353b74f9810d5b085b6c42c9d86a5f0fdb795553235cdd48753b32e3809d18a7"
 dependencies = [
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "rummage"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dirs",
+ "image",
+ "imagesize",
+ "jwalk",
+ "kamadak-exif",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sysinfo",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "tempfile",
+ "tiny_http",
+ "uuid",
+ "windows-sys 0.61.2",
+ "zip",
 ]
 
 [[package]]
