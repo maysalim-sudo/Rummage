@@ -1,0 +1,1056 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rummage</title>
+<meta name="description" content="Rummage scans every drive you own into one catalog of photos, RAW files, designs and videos, and keeps it browsable when a drive is unplugged. For Linux and Windows.">
+<link rel="icon" href="icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=Permanent+Marker&display=swap" rel="stylesheet">
+<style>
+/*
+  Surface: Decide / Learn (a landing page), so a hero is right — and the hero is the product
+  itself: a working Rummage window lying on a photographer's light table, marked up in grease
+  pencil. That is the one loud element; every section after it makes one quiet point.
+*/
+:root {
+  --page: #f2f5f7;        /* light-table white */
+  --table: #e3e9ed;       /* the lit surface the window sits on */
+  --ink: #1c2126;         /* graphite */
+  --muted: #5b6670;       /* slate */
+  --line: #c8d1d8;        /* hairline */
+  --window: #fbfcfd;
+  --chrome: #eef2f5;
+  --pencil: #c9302c;      /* grease pencil: marks and the primary action only */
+  --pencil-ink: #fff;
+  --select: #dbe6ee;
+  --shadow: 0 1px 0 rgb(28 33 38 / .06), 0 24px 60px -28px rgb(28 33 38 / .35);
+  --wide: 125;
+  --narrow: 68;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --page: #161a1e; --table: #1d2328; --ink: #e6ebee; --muted: #94a1ab; --line: #2f383f;
+    --window: #1a1f24; --chrome: #222a30; --pencil: #ff5d50; --pencil-ink: #1a0b0a; --select: #26323b;
+    --shadow: 0 1px 0 rgb(0 0 0 / .3), 0 30px 70px -30px rgb(0 0 0 / .8);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --page: #161a1e; --table: #1d2328; --ink: #e6ebee; --muted: #94a1ab; --line: #2f383f;
+  --window: #1a1f24; --chrome: #222a30; --pencil: #ff5d50; --pencil-ink: #1a0b0a; --select: #26323b;
+  --shadow: 0 1px 0 rgb(0 0 0 / .3), 0 30px 70px -30px rgb(0 0 0 / .8);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+  font: 400 17px/1.55 "Archivo", system-ui, sans-serif;
+  font-variation-settings: "wdth" 100;
+}
+a { color: inherit; }
+button, input, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--pencil); outline-offset: 2px; }
+img { display: block; }
+.wrap { width: min(1240px, 100% - 32px); margin-inline: auto; }
+
+/* ---------- top bar ---------- */
+.top { display: flex; align-items: center; gap: 24px; padding: 20px 0; }
+.wordmark {
+  display: flex; align-items: center; gap: 10px;
+  font-weight: 800; font-size: 22px; letter-spacing: -.01em; text-decoration: none;
+  font-variation-settings: "wdth" var(--narrow);
+}
+.wordmark img { width: 28px; height: 28px; border-radius: 7px; }
+.top nav { margin-left: auto; display: flex; gap: 22px; font-size: 15px; }
+.top nav a { text-decoration: none; color: var(--muted); }
+.top nav a:hover { color: var(--ink); }
+
+/* ---------- hero ---------- */
+.hero { padding: 40px 0 36px; display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 48px; align-items: end; }
+h1 {
+  margin: 0;
+  font-size: clamp(54px, 9.4vw, 136px);
+  line-height: .86;
+  font-weight: 800;
+  letter-spacing: -.025em;
+  font-variation-settings: "wdth" 62;
+  text-wrap: balance;
+}
+.hero p { margin: 0 0 22px; font-size: 19px; color: var(--muted); max-width: 46ch; text-wrap: pretty; }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; min-height: 44px;
+  padding: 0 18px; border-radius: 6px; border: 1px solid var(--line); background: var(--window);
+  text-decoration: none; font-weight: 600; font-size: 15px; cursor: pointer;
+}
+.btn:hover { border-color: var(--ink); }
+.btn.primary { background: var(--pencil); border-color: var(--pencil); color: var(--pencil-ink); }
+.btn.primary:hover { filter: brightness(1.06); }
+
+/* ---------- light table + demo ---------- */
+.table {
+  position: relative;
+  background:
+    radial-gradient(1200px 500px at 50% 0%, rgb(255 255 255 / .55), transparent 70%),
+    var(--table);
+  border-block: 1px solid var(--line);
+  padding: 92px 0 64px;
+}
+:root[data-theme="dark"] .table, .dark-table { background: var(--table); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .table { background: var(--table); } }
+
+.notes { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
+.notes svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.ink { fill: none; stroke: var(--pencil); stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; opacity: .92; }
+.note {
+  position: absolute; font-family: "Permanent Marker", cursive; color: var(--pencil);
+  font-size: 19px; line-height: 1.15; width: max-content; max-width: 260px; transform: rotate(-2deg);
+}
+.notes.drawing .ink { stroke-dasharray: var(--len); stroke-dashoffset: var(--len); animation: draw .9s ease-out forwards; animation-delay: var(--delay, 0s); }
+.notes.drawing .note { opacity: 0; animation: appear .4s ease-out forwards; animation-delay: var(--delay, 0s); }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+@keyframes appear { to { opacity: 1; } }
+.hint { display: none; margin: 0 0 14px; font-family: "Permanent Marker", cursive; color: var(--pencil); font-size: 17px; }
+
+.win {
+  position: relative; z-index: 1;
+  background: var(--window); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow);
+  overflow: hidden; font-size: 13px; line-height: 1.4;
+}
+.titlebar {
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; height: 34px; padding: 0 10px;
+  background: var(--chrome); border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12.5px;
+}
+.titlebar .t { font-weight: 600; color: var(--ink); }
+.titlebar .ctl { justify-self: end; display: flex; gap: 14px; }
+.titlebar .ctl i { width: 10px; height: 10px; border: 1.5px solid var(--muted); border-radius: 50%; opacity: .6; }
+.app { display: grid; grid-template-columns: 224px minmax(0, 1fr) 0; height: 620px; transition: grid-template-columns .25s ease; }
+.app.inspecting { grid-template-columns: 224px minmax(0, 1fr) 268px; }
+
+/* sidebar */
+.side { border-right: 1px solid var(--line); overflow-y: auto; padding: 12px 8px; background: var(--chrome); }
+.side h2 { margin: 6px 8px 6px; font-size: 11.5px; font-weight: 600; color: var(--muted); letter-spacing: .01em; }
+.drive { margin-bottom: 4px; }
+.row {
+  display: flex; align-items: center; gap: 8px; width: 100%; border: 0; background: none; text-align: left;
+  padding: 6px 8px; border-radius: 5px; cursor: pointer; min-height: 30px;
+}
+.row:hover { background: var(--select); }
+.row.on { background: var(--select); box-shadow: inset 0 0 0 1px var(--line); }
+.row .nm { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .ct { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; }
+.drive.off .nm { color: var(--muted); }
+.meta { padding: 0 8px 0 30px; color: var(--muted); font-size: 11.5px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: #2f9e5b; flex: none; }
+.drive.off .dot { background: var(--muted); opacity: .5; }
+.sw {
+  flex: none; width: 30px; height: 17px; border-radius: 9px; border: 0; padding: 0; cursor: pointer;
+  background: #2f9e5b; position: relative; transition: background .2s;
+}
+.sw::after { content: ""; position: absolute; top: 2px; left: 15px; width: 13px; height: 13px; border-radius: 50%; background: #fff; transition: left .2s; }
+.sw[aria-checked="false"] { background: var(--line); }
+.sw[aria-checked="false"]::after { left: 2px; }
+.tree { margin: 2px 0 6px 18px; }
+.tree .row { min-height: 26px; padding: 3px 8px; }
+.tree .row .nm { font-weight: 400; }
+.tree .tree { margin-left: 12px; }
+
+/* main */
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.seg { display: flex; }
+.seg button { border: 1px solid var(--line); background: var(--window); padding: 4px 11px; cursor: pointer; min-height: 28px; }
+.seg button:first-child { border-radius: 5px 0 0 5px; }
+.seg button:last-child { border-radius: 0 5px 5px 0; margin-left: -1px; }
+.seg button[aria-selected="true"] { background: var(--ink); border-color: var(--ink); color: var(--window); }
+.search { flex: 1; min-width: 140px; border: 1px solid var(--line); background: var(--window); border-radius: 5px; padding: 4px 9px; min-height: 28px; }
+.bar input[type="range"] { width: 90px; accent-color: var(--ink); }
+.count { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.chip {
+  border: 1px solid var(--line); background: var(--window); border-radius: 14px; padding: 3px 11px; cursor: pointer; min-height: 28px;
+}
+.chip[aria-pressed="true"] { background: var(--ink); color: var(--window); border-color: var(--ink); }
+.pop { position: relative; }
+.pop-panel {
+  position: absolute; z-index: 5; top: calc(100% + 4px); left: 0; min-width: 210px; padding: 6px;
+  background: var(--window); border: 1px solid var(--line); border-radius: 6px; box-shadow: var(--shadow);
+}
+.pop-panel label { display: flex; gap: 8px; align-items: center; padding: 5px 6px; border-radius: 4px; cursor: pointer; }
+.pop-panel label:hover { background: var(--select); }
+.pop-panel .n { margin-left: auto; color: var(--muted); font-size: 12px; }
+.crumbs { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--line); color: var(--muted); }
+.crumbs button { border: 0; background: none; padding: 2px 4px; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.crumbs b { color: var(--ink); }
+.crumbs .x { margin-left: auto; text-decoration: none; }
+
+.grid { flex: 1; overflow-y: auto; padding: 10px; display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--tile, 132px), 1fr)); gap: 8px; align-content: start; }
+.tile { border: 2px solid transparent; border-radius: 6px; background: none; padding: 0; text-align: left; cursor: pointer; min-width: 0; }
+.tile:hover { border-color: var(--line); }
+.tile.on { border-color: var(--ink); background: var(--select); }
+.ph { position: relative; aspect-ratio: 1; background: var(--chrome); border-radius: 4px; overflow: hidden; display: grid; place-items: center; }
+.ph img { width: 100%; height: 100%; object-fit: contain; }
+.tile.off .ph img { opacity: .45; filter: saturate(.6); }
+.tag { position: absolute; right: 5px; bottom: 5px; padding: 0 5px; border-radius: 3px; font-size: 10.5px; color: #fff; background: rgb(0 0 0 / .62); }
+.cap { padding: 3px 3px 2px; }
+.cap span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cap .s { color: var(--muted); font-size: 11.5px; }
+.rawph { color: var(--muted); font-size: 11.5px; text-align: center; padding: 8px; }
+.rawph svg { width: 34px; height: 34px; display: block; margin: 0 auto 4px; stroke: var(--muted); fill: none; stroke-width: 1.5; }
+.empty { grid-column: 1 / -1; padding: 50px 10px; text-align: center; color: var(--muted); }
+
+/* inspector */
+.insp { border-left: 1px solid var(--line); overflow-y: auto; padding: 10px; min-width: 0; }
+.prev { position: relative; aspect-ratio: 4 / 3; background: var(--chrome); border-radius: 6px; overflow: hidden; display: grid; place-items: center; }
+.prev img { width: 100%; height: 100%; object-fit: contain; }
+.player { background: #000; }
+.player img { transition: transform 10s linear; }
+.player.playing img { transform: scale(1.12) translateX(-4%); }
+.play {
+  position: absolute; inset: auto 8px 8px 8px; display: flex; align-items: center; gap: 8px; color: #fff; font-size: 11.5px;
+}
+.play button { width: 28px; height: 28px; border-radius: 50%; border: 0; background: rgb(255 255 255 / .9); cursor: pointer; display: grid; place-items: center; }
+.play button svg { width: 12px; height: 12px; fill: #111; }
+.play .track { flex: 1; height: 4px; background: rgb(255 255 255 / .35); border-radius: 2px; overflow: hidden; }
+.play .track i { display: block; height: 100%; width: 0; background: #fff; }
+.insp h3 { margin: 10px 0 6px; font-size: 14px; overflow-wrap: anywhere; }
+.insp dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 0; }
+.insp dt { color: var(--muted); }
+.insp dd { margin: 0; overflow-wrap: anywhere; }
+.insp .acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.insp .acts button { border: 1px solid var(--line); background: var(--window); border-radius: 5px; padding: 5px 10px; cursor: pointer; }
+.insp .acts button.p { background: var(--ink); color: var(--window); border-color: var(--ink); }
+.insp .acts button:disabled { opacity: .45; cursor: default; }
+.insp .warn { color: var(--muted); margin: 8px 0 0; }
+
+/* duplicates */
+.dupes { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.dhead { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 10px; border-bottom: 1px solid var(--line); }
+.dhead .sp { flex: 1; }
+.dhead .go { border: 0; background: var(--pencil); color: var(--pencil-ink); border-radius: 5px; padding: 6px 12px; font-weight: 600; cursor: pointer; }
+.prog { padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.prog .bar2 { height: 4px; background: var(--chrome); border-radius: 2px; overflow: hidden; margin-top: 5px; }
+.prog .bar2 i { display: block; height: 100%; background: var(--ink); width: 0; transition: width .15s linear; }
+.notice { padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.groups { flex: 1; overflow-y: auto; padding: 10px; }
+.group { border: 1px solid var(--line); border-radius: 7px; padding: 9px; margin-bottom: 10px; }
+.ghead { display: flex; gap: 10px; align-items: baseline; margin-bottom: 7px; }
+.ghead .m { color: var(--muted); }
+.ghead .lnk, .bulk .lnk { margin-left: auto; border: 0; background: none; color: var(--ink); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; padding: 0; }
+.bulk { margin-bottom: 10px; display: flex; }
+.bulk .lnk { margin-left: 0; }
+.members { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
+.mem { flex: none; width: 150px; border: 2px solid transparent; border-radius: 6px; padding: 3px; }
+.mem.ch { border-color: var(--pencil); }
+.mem .ph { aspect-ratio: 4 / 3; }
+.mem.off .ph img { opacity: .45; }
+.mem .nm { font-weight: 600; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mem .wh, .mem .ds { color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mem label { display: flex; gap: 5px; align-items: center; margin-top: 3px; cursor: pointer; }
+.mem label.dis { opacity: .5; cursor: default; }
+.keeper { position: absolute; left: 5px; top: 5px; padding: 0 6px; font-size: 10.5px; border-radius: 3px; background: #2f9e5b; color: #fff; }
+.dfoot { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-top: 1px solid var(--line); }
+.dfoot .sp { flex: 1; }
+.dfoot button { border: 1px solid var(--line); background: var(--window); border-radius: 5px; padding: 5px 10px; cursor: pointer; }
+.dfoot .trash { background: var(--pencil); border-color: var(--pencil); color: var(--pencil-ink); font-weight: 600; }
+
+.toast {
+  position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 6;
+  background: var(--ink); color: var(--window); padding: 8px 14px; border-radius: 6px; font-size: 13px; max-width: 90%;
+  opacity: 0; transition: opacity .2s; pointer-events: none;
+}
+.toast.show { opacity: 1; }
+.caption { margin: 14px 0 0; color: var(--muted); font-size: 14px; }
+
+/* ---------- sections ---------- */
+section.point { padding: 96px 0; border-bottom: 1px solid var(--line); }
+section.point h2 {
+  margin: 0 0 22px; font-size: clamp(34px, 4.6vw, 60px); line-height: .95; font-weight: 800; letter-spacing: -.02em;
+  font-variation-settings: "wdth" 70; max-width: 18ch; text-wrap: balance;
+}
+.lede { font-size: 19px; color: var(--muted); max-width: 58ch; margin: 0; text-wrap: pretty; }
+.lede + .lede { margin-top: 14px; }
+
+.wall {
+  margin: 46px 0 34px; font-weight: 800; line-height: .92; letter-spacing: -.01em;
+  font-size: clamp(40px, 7.2vw, 104px); display: flex; flex-wrap: wrap; gap: .02em .26em;
+}
+.wall span { font-variation-settings: "wdth" var(--w, 100); }
+.wall span:nth-child(3n + 1) { --w: 62; }
+.wall span:nth-child(3n + 2) { --w: 125; color: var(--muted); }
+.wall span:nth-child(3n) { --w: 90; }
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 56px; align-items: start; }
+
+ol.steps { list-style: none; margin: 46px 0 40px; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; counter-reset: step; }
+ol.steps li { counter-increment: step; padding: 0 28px 0 0; border-left: 1px solid var(--line); padding-left: 20px; }
+ol.steps li::before {
+  content: counter(step); display: block; font-weight: 800; font-size: 56px; line-height: 1;
+  font-variation-settings: "wdth" 62; color: var(--pencil); margin-bottom: 14px;
+}
+ol.steps h3 { margin: 0 0 6px; font-size: 21px; font-variation-settings: "wdth" 85; }
+ol.steps p { margin: 0; color: var(--muted); }
+
+.lanes { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--line); }
+.lanes li { display: grid; grid-template-columns: 9.5em 1fr auto; gap: 14px; align-items: center; padding: 14px 0; border-bottom: 1px solid var(--line); }
+.lanes b { font-variation-settings: "wdth" 80; }
+.lanes .who { color: var(--muted); }
+.ticks { display: flex; gap: 4px; }
+.ticks i { width: 22px; height: 8px; border-radius: 2px; background: var(--ink); }
+.ticks i.idle { background: var(--line); }
+
+.download { padding: 110px 0 100px; }
+.download h2 {
+  margin: 0 0 18px; font-size: clamp(48px, 8vw, 116px); line-height: .86; font-weight: 800; letter-spacing: -.025em;
+  font-variation-settings: "wdth" 62;
+}
+.download .actions { margin: 28px 0 18px; }
+.small { color: var(--muted); font-size: 15px; max-width: 60ch; }
+footer { padding: 28px 0 40px; color: var(--muted); font-size: 14px; display: flex; flex-wrap: wrap; gap: 18px; }
+footer a { color: var(--muted); }
+.theme { margin-left: auto; border: 1px solid var(--line); background: none; border-radius: 5px; padding: 4px 10px; cursor: pointer; color: var(--muted); }
+
+/* ---------- responsive ---------- */
+@media (max-width: 1100px) {
+  .app.inspecting { grid-template-columns: 200px minmax(0, 1fr) 240px; }
+  .app { grid-template-columns: 200px minmax(0, 1fr) 0; }
+}
+@media (max-width: 900px) {
+  .hero { grid-template-columns: 1fr; gap: 22px; }
+  .notes { display: none; }
+  .hint { display: block; }
+  .table { padding: 36px 0 44px; }
+  .app, .app.inspecting { display: flex; flex-direction: column; height: auto; }
+  .side { border-right: 0; border-bottom: 1px solid var(--line); display: flex; gap: 6px; overflow-x: auto; padding: 8px; }
+  .side h2, .side .meta, .side .tree, .side .jobs { display: none; }
+  .drive { flex: none; margin: 0; }
+  .grid { height: 430px; flex: none; }
+  .insp { border-left: 0; border-top: 1px solid var(--line); }
+  .app:not(.inspecting) .insp { display: none; }
+  .split, ol.steps { grid-template-columns: 1fr; }
+  ol.steps { gap: 28px; }
+  .lanes li { grid-template-columns: 1fr auto; }
+  .lanes .who { grid-column: 1 / -1; }
+  .groups { max-height: 520px; }
+  section.point { padding: 64px 0; }
+}
+@media (max-width: 520px) {
+  .top nav a:not(.dl) { display: none; }
+  body { font-size: 16px; }
+  .bar input[type="range"] { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  .notes.drawing .ink { stroke-dashoffset: 0; }
+  .notes.drawing .note { opacity: 1; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="wordmark" href="#"><img src="icon.png" alt="">Rummage</a>
+    <nav>
+      <a href="#formats">Formats</a>
+      <a href="#duplicates">Duplicates</a>
+      <a href="https://github.com/maysalim-sudo/Rummage">GitHub</a>
+      <a class="dl" href="#download">Download</a>
+    </nav>
+  </header>
+
+  <section class="hero">
+    <h1>All your drives. One place to look.</h1>
+    <div>
+      <p>Rummage scans every drive you own into one catalog of photos, RAW files, designs and videos, and keeps it browsable even when the drive is in a drawer.</p>
+      <div class="actions">
+        <a class="btn primary" href="#download">Download for Linux or Windows</a>
+        <a class="btn" href="#demo">Try it below</a>
+      </div>
+    </div>
+  </section>
+</div>
+
+<section class="table" id="demo" aria-label="Interactive demo of the Rummage window">
+  <div class="notes" id="notes" aria-hidden="true">
+    <svg id="ink"></svg>
+    <div class="note" id="note-plug">Unplug a drive. Its photos stay right here.</div>
+    <div class="note" id="note-dupes">Then go hunting for copies.</div>
+  </div>
+  <div class="wrap">
+    <p class="hint">Try it: unplug a drive, search for “lisbon”, then open Duplicates.</p>
+    <div class="win" id="win">
+      <div class="titlebar"><span></span><span class="t">Rummage</span><span class="ctl"><i></i><i></i><i></i></span></div>
+      <div class="app" id="app">
+        <aside class="side" id="side"></aside>
+        <div class="main" id="main"></div>
+        <aside class="insp" id="insp" aria-label="File details"></aside>
+      </div>
+      <div class="toast" id="toast" role="status"></div>
+    </div>
+    <p class="caption">A working model of the real window, with made-up photos. Everything you click here behaves the way it does in the app.</p>
+  </div>
+</section>
+
+<div class="wrap">
+  <section class="point" id="formats">
+    <h2>Opens the files your file manager shows as blank icons.</h2>
+    <p class="lede">Thumbnails and large previews for iPhone photos, layered Photoshop files, Illustrator artwork, PDFs and Figma files, next to every ordinary image and video.</p>
+    <div class="wall" aria-label="Supported formats">
+      <span>HEIC</span><span>PSD</span><span>AI</span><span>EPS</span><span>PDF</span><span>FIG</span><span>SVG</span><span>AVIF</span><span>TIFF</span><span>JPG</span><span>PNG</span><span>WEBP</span><span>TGA</span><span>EXR</span><span>MP4</span><span>MOV</span><span>MKV</span><span>WEBM</span><span>MTS</span><span>AVI</span>
+    </div>
+    <div class="split">
+      <p class="lede">Videos play in the side panel with one click, seeking included. Anything the built-in player can’t handle opens in VLC.</p>
+      <p class="lede">RAW files from Canon, Nikon, Sony, Fujifilm and others are catalogued with their camera, lens and exposure today. Their previews come in a later version.</p>
+    </div>
+  </section>
+
+  <section class="point" id="duplicates">
+    <h2>Finds the copy you made in 2019 and forgot about.</h2>
+    <p class="lede">Hundreds of thousands of files, compared without reading most of them.</p>
+    <ol class="steps">
+      <li><h3>Same size?</h3><p>Only files that share their exact size with another file are candidates. Everything else is never opened.</p></li>
+      <li><h3>Same start and end?</h3><p>A quick fingerprint of the first and last 64 KB rules out almost all of the rest.</p></li>
+      <li><h3>Same everything?</h3><p>Files that still match are read in full and compared byte for byte, with BLAKE3.</p></li>
+    </ol>
+    <div class="split">
+      <p class="lede">Similar photos, the resized, re-exported and recompressed ones, are matched from their thumbnails. That works even for drives that aren’t plugged in.</p>
+      <p class="lede">Nothing is deleted outright. Extras go to your system trash, where you can restore them, and Rummage won’t let the last copy go.</p>
+    </div>
+  </section>
+
+  <section class="point">
+    <div class="split">
+      <div>
+        <h2>Easy on old hard drives.</h2>
+        <p class="lede">Each physical disk gets its own reader: a few threads for an SSD, a single one for a spinning disk, so two partitions of one hard drive take turns instead of fighting over it.</p>
+        <p class="lede">Thumbnails and photo details appear in the background while you browse, and you can pause at any time.</p>
+      </div>
+      <ul class="lanes" aria-label="Readers per disk, for example">
+        <li><b>NVMe SSD</b><span class="who">Laptop, Camera SSD</span><span class="ticks" aria-label="4 readers"><i></i><i></i><i></i><i></i></span></li>
+        <li><b>Hard drive</b><span class="who">Archive, Backup</span><span class="ticks" aria-label="1 reader"><i></i><i class="idle"></i><i class="idle"></i><i class="idle"></i></span></li>
+        <li><b>SD card</b><span class="who">Card from the camera</span><span class="ticks" aria-label="1 reader"><i></i><i class="idle"></i><i class="idle"></i><i class="idle"></i></span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="point">
+    <h2>Your catalog stays on your computer.</h2>
+    <p class="lede">No account, no cloud, no uploading. The catalog and its thumbnails live in a folder you choose. The only time Rummage goes online is to check GitHub for a new version.</p>
+  </section>
+
+  <section class="download" id="download">
+    <h2>Rummage for Linux and Windows.</h2>
+    <p class="lede">An AppImage that runs on any 64-bit Linux, a .deb for Ubuntu and Debian, and an installer for Windows. Updates install themselves after you say yes.</p>
+    <div class="actions">
+      <a class="btn primary" href="https://github.com/maysalim-sudo/Rummage/releases/latest">Linux AppImage</a>
+      <a class="btn" href="https://github.com/maysalim-sudo/Rummage/releases/latest">Linux .deb</a>
+      <a class="btn" href="https://github.com/maysalim-sudo/Rummage/releases/latest">Windows installer</a>
+    </div>
+    <p class="small">The first release is being prepared. Watch the repository on GitHub to hear when it’s out, or build it yourself from the source.</p>
+  </section>
+
+  <footer>
+    <span>Rummage is made by Salim May.</span>
+    <a href="https://github.com/maysalim-sudo/Rummage">Source on GitHub</a>
+    <button class="theme" id="theme" type="button">Dark mode</button>
+  </footer>
+</div>
+
+<script>
+"use strict";
+(() => {
+  // ---------- made-up catalog ----------
+  const DRIVES = [
+    { id: 1, name: "Laptop", disk: "NVMe SSD", fs: "ext4", used: "412 of 490 GB", online: true },
+    { id: 2, name: "Archive HDD", disk: "Hard drive", fs: "NTFS", used: "1.6 of 1.8 TB", online: true },
+    { id: 3, name: "Camera SSD", disk: "NVMe SSD", fs: "exFAT", used: "610 of 874 GB", online: true },
+    { id: 4, name: "SD card", disk: "SD card", fs: "exFAT", used: "51 of 128 GB", online: false },
+  ];
+  const day = (y, m, d, h = 12) => Date.UTC(y, m - 1, d, h) / 1000;
+  const MB = 1024 * 1024;
+  const files = [];
+  let nextId = 1;
+  function add(f) { files.push({ id: nextId++, ...f }); }
+
+  // [drive, folder, name, kind, scene, seed, camera, w, h, mb, date, extra]
+  const L = (dir, name, scene, seed, w, h, mb, date, x = {}) => add({ drive: 1, dir, name, scene, seed, w, h, size: mb * MB, date, ...x });
+  const A = (dir, name, scene, seed, w, h, mb, date, x = {}) => add({ drive: 2, dir, name, scene, seed, w, h, size: mb * MB, date, ...x });
+  const C = (dir, name, scene, seed, w, h, mb, date, x = {}) => add({ drive: 3, dir, name, scene, seed, w, h, size: mb * MB, date, ...x });
+  const S = (dir, name, scene, seed, w, h, mb, date, x = {}) => add({ drive: 4, dir, name, scene, seed, w, h, size: mb * MB, date, ...x });
+  const iphone = { kind: "image", camera: "Apple iPhone XS", lens: "iPhone XS back camera 4.25mm f/1.8", exp: "f/1.8 · 1/1200 · ISO 25 · 4 mm" };
+  const d750 = { camera: "NIKON D750", lens: "AF-S NIKKOR 24-70mm f/2.8E", exp: "f/8 · 1/320 · ISO 100 · 35 mm" };
+  const eosrp = { camera: "Canon EOS RP", lens: "RF35mm F1.8 MACRO IS STM", exp: "f/2.8 · 1/200 · ISO 400 · 35 mm" };
+  const xt3 = { kind: "image", camera: "FUJIFILM X-T3", lens: "XF23mmF2 R WR", exp: "f/5.6 · 1/500 · ISO 160 · 23 mm" };
+
+  // Lisbon trip on the laptop, with a backup of some of it on the archive drive (exact copies).
+  L("Pictures/Lisbon 2019", "IMG_2041.HEIC", "coast", 11, 4032, 3024, 2.1, day(2019, 5, 3, 18), { ...iphone, dup: "a" });
+  L("Pictures/Lisbon 2019", "IMG_2047.HEIC", "city", 12, 3024, 4032, 1.8, day(2019, 5, 3, 21), { ...iphone, dup: "b" });
+  L("Pictures/Lisbon 2019", "IMG_2063.HEIC", "tram", 13, 4032, 3024, 2.4, day(2019, 5, 4, 10), iphone);
+  L("Pictures/Lisbon 2019", "IMG_2088.HEIC", "coast", 14, 4032, 3024, 2.0, day(2019, 5, 5, 19), { ...iphone, dup: "c" });
+  L("Pictures/Lisbon 2019", "tram-28.MOV", "tram", 15, 1920, 1080, 84, day(2019, 5, 4, 11), { kind: "video", camera: "Apple iPhone XS", dur: 38, codec: "HEVC · 30 fps" });
+  L("Pictures/Lisbon 2019", "IMG_2102.HEIC", "dunes", 16, 4032, 3024, 2.2, day(2019, 5, 6, 17), iphone);
+  A("Backup/Phone 2019/Lisbon", "IMG_2041.HEIC", "coast", 11, 4032, 3024, 2.1, day(2019, 5, 3, 18), { ...iphone, dup: "a" });
+  A("Backup/Phone 2019/Lisbon", "IMG_2047.HEIC", "city", 12, 3024, 4032, 1.8, day(2019, 5, 3, 21), { ...iphone, dup: "b" });
+  A("Backup/Phone 2019/Lisbon", "IMG_2088.HEIC", "coast", 14, 4032, 3024, 2.0, day(2019, 5, 5, 19), { ...iphone, dup: "c" });
+  A("Backup/Phone 2019/Lisbon (copy)", "IMG_2041.HEIC", "coast", 11, 4032, 3024, 2.1, day(2019, 5, 3, 18), { ...iphone, dup: "a" });
+
+  // An Atlas mountains trip shot on a Nikon: RAW + JPEG on the archive, resized exports on the camera SSD (similar).
+  A("Photos/2016 Atlas", "DSC_0412.NEF", "mountains", 21, 6016, 4016, 26, day(2016, 9, 12, 7), { kind: "raw", ...d750 });
+  A("Photos/2016 Atlas", "DSC_0412.JPG", "mountains", 21, 6016, 4016, 9.8, day(2016, 9, 12, 7), { kind: "image", ...d750, sim: "m1" });
+  A("Photos/2016 Atlas", "DSC_0431.JPG", "dunes", 22, 6016, 4016, 10.4, day(2016, 9, 13, 18), { kind: "image", ...d750, sim: "m2" });
+  A("Photos/2016 Atlas", "DSC_0450.JPG", "mountains", 23, 6016, 4016, 9.1, day(2016, 9, 14, 6), { kind: "image", ...d750 });
+  A("Photos/2016 Atlas", "DSC_0467.JPG", "forest", 24, 4016, 6016, 11.2, day(2016, 9, 15, 9), { kind: "image", ...d750 });
+  C("Exports/Atlas for print", "atlas-sunrise-2048.jpg", "mountains", 21, 2048, 1367, 1.4, day(2021, 2, 2), { kind: "image", ...d750, sim: "m1", variant: 1 });
+  C("Exports/Atlas for print", "atlas-dunes-web.jpg", "dunes", 22, 1600, 1067, 0.6, day(2021, 2, 2), { kind: "image", ...d750, sim: "m2", variant: 2 });
+  C("Exports/Atlas for print", "atlas-dunes-insta.jpg", "dunes", 22, 1080, 1080, 0.4, day(2021, 2, 3), { kind: "image", ...d750, sim: "m2", variant: 3 });
+
+  // Family videos on the archive.
+  A("Family/Videos", "beach-day.mp4", "coast", 31, 3840, 2160, 412, day(2022, 7, 21, 16), { kind: "video", camera: "Apple iPhone 15 Pro", dur: 194, codec: "HEVC · 60 fps" });
+  A("Family/Videos", "birthday-candles.mp4", "portrait", 32, 1920, 1080, 120, day(2023, 3, 9, 20), { kind: "video", camera: "Apple iPhone 15 Pro", dur: 47, codec: "H.264 · 30 fps" });
+  A("Family/2023", "IMG_8812.HEIC", "portrait", 33, 3024, 4032, 2.6, day(2023, 3, 9, 20), { kind: "image", camera: "Apple iPhone 15 Pro", lens: "iPhone 15 Pro back camera 6.86mm f/1.78", exp: "f/1.8 · 1/60 · ISO 640 · 7 mm" });
+  A("Family/2023", "IMG_8840.HEIC", "forest", 34, 4032, 3024, 2.3, day(2023, 4, 2, 11), { kind: "image", camera: "Apple iPhone 15 Pro", lens: "iPhone 15 Pro back camera 6.86mm f/1.78", exp: "f/1.8 · 1/900 · ISO 64 · 7 mm" });
+
+  // The camera SSD: a Canon shoot, RAW and JPEG.
+  C("DCIM/100CANON", "IMG_0091.CR3", "city", 41, 6240, 4160, 31, day(2024, 10, 2, 22), { kind: "raw", ...eosrp });
+  C("DCIM/100CANON", "IMG_0091.JPG", "city", 41, 6240, 4160, 8.2, day(2024, 10, 2, 22), { kind: "image", ...eosrp, dup: "d" });
+  C("DCIM/100CANON", "IMG_0104.JPG", "tram", 42, 6240, 4160, 7.9, day(2024, 10, 2, 23), { kind: "image", ...eosrp });
+  C("DCIM/100CANON", "IMG_0117.JPG", "coast", 43, 4160, 6240, 8.8, day(2024, 10, 3, 7), { kind: "image", ...eosrp });
+  C("DCIM/100CANON", "MVI_0120.MP4", "city", 44, 3840, 2160, 980, day(2024, 10, 3, 8), { kind: "video", camera: "Canon EOS RP", dur: 312, codec: "H.264 · 24 fps" });
+
+  // Design work on the laptop.
+  L("Work/Bakery rebrand", "logo-final.ai", "logo", 51, 2400, 2400, 3.2, day(2025, 1, 14), { kind: "design" });
+  L("Work/Bakery rebrand", "menu-spring.pdf", "menu", 52, 2480, 3508, 1.1, day(2025, 2, 1), { kind: "design" });
+  L("Work/Bakery rebrand", "storefront.psd", "dunes", 53, 5000, 3333, 188, day(2025, 1, 20), { kind: "image" });
+  L("Work/Bakery rebrand", "social-kit.fig", "poster", 54, 1600, 1200, 6.4, day(2025, 2, 9), { kind: "design" });
+  L("Downloads", "IMG_0091.JPG", "city", 41, 6240, 4160, 8.2, day(2024, 10, 2, 22), { kind: "image", ...eosrp, dup: "d" });
+
+  // The SD card, currently in a drawer (offline): Fujifilm shots.
+  S("DCIM/101_FUJI", "DSCF3301.JPG", "forest", 61, 6240, 4160, 12.1, day(2025, 6, 8, 9), xt3);
+  S("DCIM/101_FUJI", "DSCF3315.JPG", "mountains", 62, 6240, 4160, 11.4, day(2025, 6, 8, 18), xt3);
+  S("DCIM/101_FUJI", "DSCF3328.RAF", "coast", 63, 6240, 4160, 49, day(2025, 6, 9, 19), { kind: "raw", ...xt3, kind2: "raw" });
+  S("DCIM/101_FUJI", "DSCF3340.JPG", "dunes", 64, 4160, 6240, 10.8, day(2025, 6, 10, 17), xt3);
+  for (const f of files) if (!f.kind) f.kind = "image";
+  for (const f of files) if (f.kind2) f.kind = f.kind2;
+
+  // ---------- procedural "photos" ----------
+  function rng(seed) {
+    let a = seed * 2654435761 >>> 0;
+    return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+  }
+  const cache = new Map();
+  function picture(f) {
+    const key = `${f.scene}-${f.seed}-${f.variant || 0}-${f.w > f.h ? "l" : f.w < f.h ? "p" : "s"}`;
+    if (cache.has(key)) return cache.get(key);
+    const ratio = f.w / f.h;
+    const W = ratio >= 1 ? 360 : Math.round(360 * ratio), H = ratio >= 1 ? Math.round(360 / ratio) : 360;
+    const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+    const g = cv.getContext("2d"); const r = rng(f.seed);
+    const v = f.variant || 0;
+    if (v) { // a resized or re-cropped export of the same photo
+      g.translate(W / 2, H / 2); g.scale(1 + v * 0.05, 1 + v * 0.05); g.translate(-W / 2, -H / 2);
+      g.filter = `brightness(${1 + v * 0.04}) saturate(${1 + v * 0.08})`;
+    }
+    const lin = (stops, y0 = 0, y1 = H) => { const gr = g.createLinearGradient(0, y0, 0, y1); stops.forEach(([o, c]) => gr.addColorStop(o, c)); return gr; };
+    const hue = Math.floor(r() * 40) - 20;
+    const hsl = (h, s, l, a = 1) => `hsl(${h + hue} ${s}% ${l}% / ${a})`;
+    const horizon = H * (0.48 + r() * 0.14);
+    switch (f.scene) {
+      case "coast": {
+        g.fillStyle = lin([[0, hsl(205, 55, 72)], [0.7, hsl(30, 80, 82)], [1, hsl(18, 85, 70)]], 0, horizon); g.fillRect(0, 0, W, horizon);
+        g.fillStyle = hsl(28, 95, 88); g.beginPath(); g.arc(W * (0.25 + r() * 0.5), horizon - H * 0.08, H * 0.07, 0, 7); g.fill();
+        g.fillStyle = lin([[0, hsl(200, 45, 45)], [1, hsl(210, 55, 22)]], horizon, H); g.fillRect(0, horizon, W, H - horizon);
+        g.strokeStyle = hsl(40, 70, 85, 0.35); g.lineWidth = 1.2;
+        for (let i = 0; i < 14; i++) { const y = horizon + 6 + i * (H - horizon) / 14; g.beginPath(); g.moveTo(r() * W * 0.4, y); g.lineTo(W * (0.5 + r() * 0.5), y + r() * 2); g.stroke(); }
+        break;
+      }
+      case "dunes": {
+        g.fillStyle = lin([[0, hsl(32, 70, 78)], [1, hsl(20, 75, 86)]], 0, horizon); g.fillRect(0, 0, W, H);
+        for (let k = 0; k < 4; k++) {
+          const base = horizon + k * (H - horizon) / 4, amp = 18 + r() * 22, ph = r() * 6;
+          g.fillStyle = hsl(24 + k * 3, 55 + k * 6, 62 - k * 9);
+          g.beginPath(); g.moveTo(0, H);
+          for (let x = 0; x <= W; x += 6) g.lineTo(x, base - Math.sin(x / (60 + k * 20) + ph) * amp);
+          g.lineTo(W, H); g.fill();
+        }
+        break;
+      }
+      case "mountains": {
+        g.fillStyle = lin([[0, hsl(215, 35, 62)], [1, hsl(28, 60, 84)]], 0, horizon + 30); g.fillRect(0, 0, W, H);
+        for (let k = 0; k < 4; k++) {
+          g.fillStyle = hsl(222, 22 + k * 4, 66 - k * 13);
+          g.beginPath(); g.moveTo(0, H); let y = horizon - 30 + k * 26;
+          for (let x = 0; x <= W; x += W / 9) { y = horizon - 40 + k * 28 - r() * (70 - k * 10); g.lineTo(x, y); }
+          g.lineTo(W, H); g.fill();
+        }
+        break;
+      }
+      case "city": case "tram": {
+        g.fillStyle = lin([[0, hsl(232, 40, 14)], [1, hsl(260, 35, 30)]]); g.fillRect(0, 0, W, H);
+        let x = 0;
+        while (x < W) {
+          const bw = 18 + r() * 40, bh = H * (0.25 + r() * 0.5);
+          g.fillStyle = hsl(230, 18, 10 + r() * 8); g.fillRect(x, H - bh, bw, bh);
+          g.fillStyle = hsl(42, 95, 70, 0.9);
+          for (let wy = H - bh + 6; wy < H - 8; wy += 7) for (let wx = x + 4; wx < x + bw - 4; wx += 6) if (r() < 0.32) g.fillRect(wx, wy, 2.4, 3);
+          x += bw + 2;
+        }
+        if (f.scene === "tram") {
+          g.fillStyle = hsl(48, 92, 52); g.fillRect(W * 0.18, H * 0.66, W * 0.5, H * 0.2);
+          g.fillStyle = hsl(205, 30, 80, 0.85); for (let i = 0; i < 5; i++) g.fillRect(W * 0.2 + i * W * 0.095, H * 0.69, W * 0.07, H * 0.07);
+          g.fillStyle = hsl(230, 15, 12); g.fillRect(0, H * 0.86, W, H * 0.14);
+        }
+        break;
+      }
+      case "forest": {
+        g.fillStyle = lin([[0, hsl(140, 25, 72)], [1, hsl(150, 35, 30)]]); g.fillRect(0, 0, W, H);
+        for (let i = 0; i < 26; i++) {
+          const tx = r() * W, th = H * (0.4 + r() * 0.6), tw = 18 + r() * 30, depth = r();
+          g.fillStyle = hsl(150, 30, 18 + depth * 30);
+          g.beginPath(); g.moveTo(tx, H - th); g.lineTo(tx + tw / 2, H); g.lineTo(tx - tw / 2, H); g.fill();
+        }
+        break;
+      }
+      case "portrait": {
+        g.fillStyle = lin([[0, hsl(28, 30, 40)], [1, hsl(18, 40, 18)]]); g.fillRect(0, 0, W, H);
+        for (let i = 0; i < 18; i++) { g.fillStyle = hsl(40, 95, 70, 0.18); g.beginPath(); g.arc(r() * W, r() * H * 0.6, 4 + r() * 14, 0, 7); g.fill(); }
+        g.fillStyle = hsl(22, 25, 12);
+        g.beginPath(); g.ellipse(W / 2, H * 0.42, W * 0.12, H * 0.13, 0, 0, 7); g.fill();
+        g.beginPath(); g.ellipse(W / 2, H * 0.95, W * 0.32, H * 0.32, 0, 0, 7); g.fill();
+        break;
+      }
+      case "logo": {
+        g.fillStyle = "#f6efe4"; g.fillRect(0, 0, W, H);
+        g.fillStyle = "#9b3b22"; g.beginPath(); g.arc(W / 2, H * 0.42, W * 0.22, 0, 7); g.fill();
+        g.fillStyle = "#f6efe4"; g.beginPath(); g.ellipse(W / 2, H * 0.42, W * 0.12, W * 0.06, -0.5, 0, 7); g.fill();
+        g.fillStyle = "#2b1d16"; g.font = `800 ${W * 0.1}px Archivo, sans-serif`; g.textAlign = "center"; g.fillText("Crumb & Co.", W / 2, H * 0.82);
+        break;
+      }
+      case "menu": {
+        g.fillStyle = "#fbf8f2"; g.fillRect(0, 0, W, H);
+        g.fillStyle = "#9b3b22"; g.font = `800 ${W * 0.1}px Archivo, sans-serif`; g.fillText("Spring menu", W * 0.1, H * 0.14);
+        g.fillStyle = "#2b1d16";
+        for (let i = 0; i < 9; i++) { g.fillRect(W * 0.1, H * (0.24 + i * 0.075), W * (0.4 + r() * 0.3), 3); g.fillRect(W * 0.8, H * (0.24 + i * 0.075), W * 0.1, 3); }
+        break;
+      }
+      case "poster": {
+        g.fillStyle = "#1f3b4d"; g.fillRect(0, 0, W, H);
+        g.fillStyle = "#f2b84b"; g.fillRect(W * 0.08, H * 0.12, W * 0.38, H * 0.76);
+        g.fillStyle = "#e8eef2"; g.fillRect(W * 0.54, H * 0.12, W * 0.38, H * 0.34); g.fillRect(W * 0.54, H * 0.54, W * 0.38, H * 0.34);
+        break;
+      }
+    }
+    if (f.scene !== "logo" && f.scene !== "menu" && f.scene !== "poster") { // film grain
+      g.filter = "none"; g.setTransform(1, 0, 0, 1, 0, 0);
+      const img = g.getImageData(0, 0, W, H), d = img.data;
+      for (let i = 0; i < d.length; i += 4) { const n = (r() - 0.5) * 18; d[i] += n; d[i + 1] += n; d[i + 2] += n; }
+      g.putImageData(img, 0, 0);
+    }
+    const url = cv.toDataURL("image/jpeg", 0.86);
+    cache.set(key, url);
+    return url;
+  }
+
+  // ---------- state ----------
+  const st = {
+    mode: "browse", drive: null, folder: null, sub: true, text: "", kinds: new Set(), cams: new Set(), camOpen: false,
+    tile: 132, sel: null, trashed: new Set(), expanded: new Set([2]),
+    dTab: "exact", found: false, scanning: null, chosen: new Set(), notice: "", playing: false, progress: 0,
+  };
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const driveOf = (f) => DRIVES.find((d) => d.id === f.drive);
+  const online = (f) => driveOf(f).online;
+  const fmtBytes = (b) => b < MB ? `${Math.round(b / 1024)} KB` : b < 1024 * MB ? `${(b / MB).toFixed(b < 10 * MB ? 1 : 0)} MB` : `${(b / 1024 / MB).toFixed(1)} GB`;
+  const fmtDay = (t) => new Intl.DateTimeFormat("en", { dateStyle: "medium", timeZone: "UTC" }).format(t * 1000);
+  const fmtTaken = (t) => new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }).format(t * 1000);
+  const fmtDur = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
+  const live = () => files.filter((f) => !st.trashed.has(f.id));
+  const KINDS = [["image", "Images"], ["video", "Videos"], ["raw", "RAW photos"], ["design", "Design files"]];
+
+  function matches(f, ignoreCams = false) {
+    if (st.drive !== null && f.drive !== st.drive) return false;
+    if (st.drive !== null && st.folder !== null) {
+      if (st.sub ? !(f.dir === st.folder || f.dir.startsWith(st.folder + "/")) : f.dir !== st.folder) return false;
+    }
+    if (st.kinds.size && !st.kinds.has(f.kind)) return false;
+    if (!ignoreCams && st.cams.size && !st.cams.has(f.camera)) return false;
+    if (st.text) {
+      const hay = `${f.name} ${f.dir}`.toLowerCase();
+      if (!st.text.toLowerCase().split(/\s+/).filter(Boolean).every((w) => hay.includes(w))) return false;
+    }
+    return true;
+  }
+  const visible = () => live().filter((f) => matches(f)).sort((a, b) => b.date - a.date || b.id - a.id);
+
+  // ---------- sidebar ----------
+  function folderTree(driveId) {
+    const root = new Map();
+    for (const f of live().filter((x) => x.drive === driveId)) {
+      const parts = f.dir.split("/"); let node = root, path = "";
+      for (const p of parts) {
+        path = path ? `${path}/${p}` : p;
+        if (!node.has(p)) node.set(p, { path, count: 0, kids: new Map() });
+        const n = node.get(p); n.count++; node = n.kids;
+      }
+    }
+    return root;
+  }
+  function treeHtml(map, driveId, depth) {
+    let out = "";
+    for (const [name, n] of [...map].sort((a, b) => a[0].localeCompare(b[0]))) {
+      const on = st.drive === driveId && st.folder === n.path;
+      out += `<button class="row${on ? " on" : ""}" data-act="folder" data-drive="${driveId}" data-path="${esc(n.path)}"><span class="nm">${esc(name)}</span><span class="ct">${n.count}</span></button>`;
+      if (n.kids.size && depth < 2 && (on || (st.folder || "").startsWith(n.path + "/") || depth === 0)) out += `<div class="tree">${treeHtml(n.kids, driveId, depth + 1)}</div>`;
+    }
+    return out;
+  }
+  function renderSide() {
+    const counts = (id) => live().filter((f) => f.drive === id).length;
+    let h = `<h2>Drives</h2><button class="row${st.drive === null ? " on" : ""}" data-act="drive" data-drive=""><span class="nm">All drives</span><span class="ct">${live().length}</span></button>`;
+    for (const d of DRIVES) {
+      h += `<div class="drive${d.online ? "" : " off"}">
+        <div class="row${st.drive === d.id && st.folder === null ? " on" : ""}" data-act="drive" data-drive="${d.id}" role="button" tabindex="0">
+          <span class="dot"></span><span class="nm">${esc(d.name)}</span><span class="ct">${counts(d.id)}</span>
+          <button class="sw" role="switch" aria-checked="${d.online}" aria-label="${d.online ? "Unplug" : "Plug in"} ${esc(d.name)}" data-act="plug" data-drive="${d.id}" id="sw-${d.id}"></button>
+        </div>
+        <div class="meta">${d.online ? `${d.used} · ${d.fs}${d.disk === "Hard drive" ? " · HDD" : ""}` : "Offline. Still browsable."}</div>
+        ${st.drive === d.id ? `<div class="tree">${treeHtml(folderTree(d.id), d.id, 0)}</div>` : ""}
+      </div>`;
+    }
+    $("side").innerHTML = h;
+  }
+
+  // ---------- main area ----------
+  function camPanel() {
+    const counts = new Map();
+    for (const f of live().filter((x) => matches(x, true) && x.camera)) counts.set(f.camera, (counts.get(f.camera) || 0) + 1);
+    for (const c of st.cams) if (!counts.has(c)) counts.set(c, 0);
+    const list = [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    return `<div class="pop-panel" role="listbox" aria-multiselectable="true">${list.map(([c, n]) =>
+      `<label><input type="checkbox" data-act="cam" data-cam="${esc(c)}"${st.cams.has(c) ? " checked" : ""}> ${esc(c)}<span class="n">${n}</span></label>`).join("") || `<span class="n">No cameras here</span>`}</div>`;
+  }
+  function camLabel() {
+    if (!st.cams.size) return "Any camera";
+    if (st.cams.size === 1) return [...st.cams][0];
+    return `${st.cams.size} cameras`;
+  }
+  function tileHtml(f) {
+    const off = !online(f);
+    let ph;
+    if (f.kind === "raw") ph = `<div class="rawph"><svg viewBox="0 0 32 32"><rect x="4" y="9" width="24" height="17" rx="2"/><circle cx="16" cy="17.5" r="5"/><path d="M11 9l2-3h6l2 3"/></svg>RAW preview later</div>`;
+    else ph = `<img src="${picture(f)}" alt="">`;
+    const tag = f.kind === "video" ? fmtDur(f.dur) : f.kind === "raw" ? "RAW" : f.kind === "design" ? f.name.split(".").pop().toUpperCase() : "";
+    return `<button class="tile${st.sel === f.id ? " on" : ""}${off ? " off" : ""}" data-act="sel" data-id="${f.id}" title="${esc(off ? `${f.name}, on ${driveOf(f).name} (unplugged)` : f.name)}">
+      <div class="ph">${ph}${tag ? `<span class="tag">${tag}</span>` : ""}</div>
+      <div class="cap"><span>${esc(f.name)}</span><span class="s">${fmtDay(f.date)}${off ? ` · ${esc(driveOf(f).name)}` : ""}</span></div></button>`;
+  }
+  function emptyText() {
+    const bits = [];
+    if (st.drive !== null) bits.push(`drive “${DRIVES.find((d) => d.id === st.drive).name}”`);
+    if (st.folder) bits.push(`folder “${st.folder}”`);
+    if (st.text) bits.push(`search “${st.text}”`);
+    if (st.kinds.size) bits.push(KINDS.filter(([k]) => st.kinds.has(k)).map(([, l]) => l).join(" or "));
+    if (st.cams.size) bits.push([...st.cams].join(" or "));
+    return bits.length ? `No files match: ${bits.join(", ")}.` : "No files yet.";
+  }
+  function renderMain(keepFocus) {
+    const list = visible();
+    const modeBar = `<div class="seg" role="tablist" aria-label="Mode">
+      <button role="tab" aria-selected="${st.mode === "browse"}" data-act="mode" data-mode="browse">Browse</button>
+      <button role="tab" aria-selected="${st.mode === "dupes"}" data-act="mode" data-mode="dupes" id="tab-dupes">Duplicates</button></div>`;
+    let h;
+    if (st.mode === "browse") {
+      h = `<div class="bar">${modeBar}
+        <input class="search" id="q" type="search" placeholder="Search file and folder names…" value="${esc(st.text)}" aria-label="Search">
+        <input type="range" min="96" max="200" step="4" value="${st.tile}" data-act="size" aria-label="Thumbnail size">
+        <span class="count">${list.length} files</span></div>
+        <div class="bar">${KINDS.map(([k, l]) => `<button class="chip" aria-pressed="${st.kinds.has(k)}" data-act="kind" data-kind="${k}">${l}</button>`).join("")}
+        <div class="pop"><button class="chip" aria-expanded="${st.camOpen}" aria-pressed="${st.cams.size > 0}" data-act="camopen">${esc(camLabel())} ▾</button>${st.camOpen ? camPanel() : ""}</div></div>`;
+      if (st.drive !== null && st.folder !== null) {
+        const parts = st.folder.split("/");
+        h += `<div class="crumbs"><button data-act="folder" data-drive="${st.drive}" data-path="">${esc(DRIVES.find((d) => d.id === st.drive).name)}</button>${parts.map((p, i) => {
+          const path = parts.slice(0, i + 1).join("/");
+          return `<span>/</span>${i === parts.length - 1 ? `<b>${esc(p)}</b>` : `<button data-act="folder" data-drive="${st.drive}" data-path="${esc(path)}">${esc(p)}</button>`}`;
+        }).join("")}<label class="x"><input type="checkbox" data-act="sub"${st.sub ? " checked" : ""}> Include subfolders</label></div>`;
+      }
+      h += `<div class="grid" id="grid" style="--tile:${st.tile}px">${list.length ? list.map(tileHtml).join("") : `<div class="empty">${esc(emptyText())}</div>`}</div>`;
+    } else {
+      h = `<div class="bar">${modeBar}<span class="count">${live().length} files on ${DRIVES.length} drives</span></div>` + dupesHtml();
+    }
+    $("main").innerHTML = h;
+    if (keepFocus) { const q = $("q"); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }
+  }
+
+  // ---------- duplicates ----------
+  function groups(kind) {
+    const key = kind === "exact" ? "dup" : "sim";
+    const by = new Map();
+    for (const f of live()) if (f[key]) (by.get(f[key]) || by.set(f[key], []).get(f[key])).push(f);
+    const out = [...by.values()].filter((g) => g.length > 1).map((g) =>
+      kind === "exact" ? g.sort((a, b) => a.date - b.date || a.id - b.id) : g.sort((a, b) => b.w * b.h - a.w * a.h));
+    return kind === "exact" ? out.sort((a, b) => b[0].size * (b.length - 1) - a[0].size * (a.length - 1)) : out;
+  }
+  const STAGES = ["Comparing the start and end of same-size files", "Checking possible copies in full", "Fingerprinting thumbnails", "Grouping similar photos"];
+  function dupesHtml() {
+    const ex = groups("exact"), si = groups("similar");
+    const wasted = ex.reduce((n, g) => n + g[0].size * (g.length - 1), 0);
+    const tabs = `<div class="seg" role="tablist" aria-label="Kind of duplicate">
+      <button role="tab" aria-selected="${st.dTab === "exact"}" data-act="dtab" data-tab="exact">Exact copies${st.found ? ` (${ex.length})` : ""}</button>
+      <button role="tab" aria-selected="${st.dTab === "similar"}" data-act="dtab" data-tab="similar">Similar photos${st.found ? ` (${si.length})` : ""}</button></div>`;
+    let h = `<div class="dupes"><div class="dhead">${tabs}${st.found && wasted ? `<span class="count">${fmtBytes(wasted)} could be freed by exact copies</span>` : ""}<span class="sp"></span>
+      ${st.scanning ? `<button class="chip" data-act="stop">Stop</button>` : `<button class="go" data-act="find">${st.found ? "Search again" : "Find duplicates"}</button>`}</div>`;
+    if (st.scanning) h += `<div class="prog" aria-live="polite">${STAGES[st.scanning.stage]} · ${st.scanning.done} of ${st.scanning.total}<div class="bar2"><i style="width:${(st.scanning.done / st.scanning.total) * 100}%"></i></div></div>`;
+    if (st.notice) h += `<div class="notice">${esc(st.notice)}</div>`;
+    const list = st.dTab === "exact" ? ex : si;
+    h += `<div class="groups">`;
+    if (!st.found) h += `<div class="empty">${st.scanning ? "Searching…" : "Click “Find duplicates” to search every plugged-in drive. Files on the SD card count too, once they’ve been checked."}</div>`;
+    else if (!list.length) h += `<div class="empty">No ${st.dTab === "exact" ? "exact copies" : "similar photos"} left.</div>`;
+    else {
+      if (st.dTab === "exact") h += `<div class="bulk"><button class="lnk" data-act="extras-all">Select every copy except the first, in all groups</button></div>`;
+      for (const g of list) {
+        h += `<article class="group"><div class="ghead"><strong>${st.dTab === "exact" ? `${g.length} copies · ${fmtBytes(g[0].size)} each` : `${g.length} similar images`}</strong>
+          ${st.dTab === "exact" ? `<span class="m">${fmtBytes(g[0].size * (g.length - 1))} extra</span>` : ""}
+          <button class="lnk" data-act="extras" data-ids="${g.slice(1).map((f) => f.id).join(",")}">Select all but the first</button></div><div class="members">`;
+        g.forEach((f, i) => {
+          const off = !online(f);
+          h += `<div class="mem${st.chosen.has(f.id) ? " ch" : ""}${off ? " off" : ""}">
+            <div class="ph"><img src="${picture(f)}" alt="">${i === 0 ? `<span class="keeper">${st.dTab === "exact" ? "Oldest" : "Largest"}</span>` : ""}</div>
+            <div class="nm" title="${esc(f.name)}">${esc(f.name)}</div>
+            <div class="wh" title="${esc(`${driveOf(f).name}: ${f.dir}`)}">${esc(driveOf(f).name)} · ${esc(f.dir)}</div>
+            <div class="ds">${f.w}×${f.h} · ${fmtBytes(f.size)}</div>
+            <label class="${off ? "dis" : ""}" title="${off ? "Plug the drive in to remove this file" : ""}"><input type="checkbox" data-act="choose" data-id="${f.id}"${st.chosen.has(f.id) ? " checked" : ""}${off ? " disabled" : ""}> Remove</label>
+          </div>`;
+        });
+        h += `</div></article>`;
+      }
+    }
+    h += `</div>`;
+    if (st.chosen.size) {
+      const bytes = [...st.chosen].reduce((n, id) => n + files.find((f) => f.id === id).size, 0);
+      h += `<div class="dfoot"><span>${st.chosen.size} selected · ${fmtBytes(bytes)}</span><span class="sp"></span><button data-act="clear">Clear</button><button class="trash" data-act="trash">Move to trash</button></div>`;
+    }
+    return h + `</div>`;
+  }
+  let scanTimer = 0;
+  function find() {
+    st.notice = ""; st.chosen.clear();
+    const totals = [24, 9, 31, 31];
+    st.scanning = { stage: 0, done: 0, total: totals[0] };
+    clearInterval(scanTimer);
+    scanTimer = setInterval(() => {
+      const s = st.scanning; if (!s) return clearInterval(scanTimer);
+      s.done = Math.min(s.total, s.done + Math.ceil(s.total / 8));
+      if (s.done >= s.total) {
+        if (s.stage === STAGES.length - 1) { st.scanning = null; st.found = true; clearInterval(scanTimer); }
+        else { s.stage++; s.done = 0; s.total = totals[s.stage]; }
+      }
+      renderMain();
+    }, 110);
+    renderMain();
+  }
+  function trash() {
+    const chosen = new Set(st.chosen), done = [], skipped = [];
+    for (const id of chosen) {
+      const f = files.find((x) => x.id === id);
+      const others = live().filter((o) => o.id !== id && ((f.dup && o.dup === f.dup) || (f.sim && o.sim === f.sim)) && !chosen.has(o.id));
+      if (!others.length) skipped.push(f); else done.push(f);
+    }
+    done.forEach((f) => st.trashed.add(f.id));
+    const freed = done.reduce((n, f) => n + f.size, 0);
+    const kept = skipped.length === 1 ? "1 file was kept" : `${skipped.length} files were kept`;
+    st.notice = !done.length
+      ? `Nothing was moved: ${kept}, because removing it would delete the last copy.`
+      : `Moved ${done.length} file${done.length === 1 ? "" : "s"} to the trash, freeing ${fmtBytes(freed)}.` +
+        (skipped.length ? ` ${kept}, because removing it would delete the last copy.` : ` You can restore ${done.length === 1 ? "it" : "them"} from the trash.`);
+    st.chosen.clear();
+    if (st.sel && st.trashed.has(st.sel)) st.sel = null;
+    render();
+  }
+
+  // ---------- inspector ----------
+  let playTimer = 0;
+  function renderInsp() {
+    const app = $("app"), f = files.find((x) => x.id === st.sel && !st.trashed.has(x.id));
+    app.classList.toggle("inspecting", !!f && st.mode === "browse");
+    if (!f || st.mode !== "browse") { $("insp").innerHTML = ""; return; }
+    const off = !online(f), d = driveOf(f);
+    let prev;
+    if (f.kind === "raw") prev = `<div class="prev"><span class="rawph">RAW previews come in a later version.<br>Details are already here.</span></div>`;
+    else if (f.kind === "video" && !off) prev = `<div class="prev player${st.playing ? " playing" : ""}"><img src="${picture(f)}" alt="${esc(f.name)}">
+      <div class="play"><button data-act="play" aria-label="${st.playing ? "Pause" : "Play"}">${st.playing ? `<svg viewBox="0 0 12 12"><rect x="2" y="1" width="3" height="10"/><rect x="7" y="1" width="3" height="10"/></svg>` : `<svg viewBox="0 0 12 12"><path d="M2 1l9 5-9 5z"/></svg>`}</button>
+      <span class="track"><i id="track" style="width:${st.progress * 100}%"></i></span><span id="tc">${fmtDur(st.progress * f.dur)} / ${fmtDur(f.dur)}</span></div></div>`;
+    else prev = `<div class="prev"><img src="${picture(f)}" alt="${esc(f.name)}"></div>`;
+    const mp = ((f.w * f.h) / 1e6).toFixed(1);
+    $("insp").innerHTML = `${prev}<h3>${esc(f.name)}</h3><dl>
+      <dt>Drive</dt><dd>${esc(d.name)}${off ? " (unplugged)" : ""}</dd>
+      <dt>Folder</dt><dd>${esc(f.dir)}</dd>
+      <dt>Size</dt><dd>${fmtBytes(f.size)}</dd>
+      <dt>Dimensions</dt><dd>${f.w} × ${f.h}${f.kind !== "video" ? ` (${mp} MP)` : ""}</dd>
+      <dt>${f.camera ? "Taken" : "Modified"}</dt><dd>${fmtTaken(f.date)}</dd>
+      ${f.camera ? `<dt>Camera</dt><dd>${esc(f.camera)}</dd>` : ""}
+      ${f.lens ? `<dt>Lens</dt><dd>${esc(f.lens)}</dd>` : ""}
+      ${f.exp ? `<dt>Exposure</dt><dd>${esc(f.exp)}</dd>` : ""}
+      ${f.dur ? `<dt>Duration</dt><dd>${fmtDur(f.dur)}</dd><dt>Video</dt><dd>${esc(f.codec)}</dd>` : ""}
+    </dl>
+    <div class="acts"><button class="p" data-act="open"${off ? " disabled" : ""}>Open</button><button data-act="reveal"${off ? " disabled" : ""}>Show in folder</button>${f.kind === "video" ? `<button data-act="vlc"${off ? " disabled" : ""}>Open in VLC</button>` : ""}</div>
+    ${off ? `<p class="warn">Plug in “${esc(d.name)}” to open this file.</p>` : ""}`;
+  }
+  function togglePlay() {
+    const f = files.find((x) => x.id === st.sel); if (!f) return;
+    st.playing = !st.playing;
+    clearInterval(playTimer);
+    if (st.playing) {
+      const started = performance.now() - st.progress * 10000;
+      playTimer = setInterval(() => {
+        st.progress = Math.min(1, (performance.now() - started) / 10000);
+        const tr = $("track"), tc = $("tc");
+        if (tr) tr.style.width = `${st.progress * 100}%`;
+        if (tc) tc.textContent = `${fmtDur(st.progress * f.dur)} / ${fmtDur(f.dur)}`;
+        if (st.progress >= 1) { st.playing = false; st.progress = 0; clearInterval(playTimer); renderInsp(); }
+      }, 100);
+    }
+    renderInsp();
+  }
+
+  // ---------- toast ----------
+  let toastTimer = 0;
+  function toast(msg) {
+    const t = $("toast"); t.textContent = msg; t.classList.add("show");
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 2600);
+  }
+
+  function render(keepFocus) { renderSide(); renderMain(keepFocus); renderInsp(); placeNotes(); }
+
+  // ---------- events ----------
+  const win = $("win");
+  win.addEventListener("click", (e) => {
+    const el = e.target.closest("[data-act]"); if (!el || el.disabled) return;
+    const act = el.dataset.act;
+    if (act !== "camopen" && act !== "cam" && st.camOpen && !e.target.closest(".pop")) { st.camOpen = false; }
+    switch (act) {
+      case "plug": {
+        e.stopPropagation();
+        const d = DRIVES.find((x) => x.id === +el.dataset.drive); d.online = !d.online;
+        toast(d.online ? `${d.name} is back. Its files open again.` : `${d.name} unplugged. Its photos stay in the catalog, dimmed.`);
+        st.playing = false; clearInterval(playTimer); return render();
+      }
+      case "drive": st.drive = el.dataset.drive ? +el.dataset.drive : null; st.folder = null; st.mode = "browse"; return render();
+      case "folder": st.drive = +el.dataset.drive; st.folder = el.dataset.path || null; st.mode = "browse"; return render();
+      case "mode": st.mode = el.dataset.mode; st.camOpen = false; return render();
+      case "kind": { const k = el.dataset.kind; st.kinds.has(k) ? st.kinds.delete(k) : st.kinds.add(k); return render(); }
+      case "camopen": st.camOpen = !st.camOpen; return renderMain();
+      case "sel": {
+        const id = +el.dataset.id; if (st.sel !== id) { st.sel = id; st.playing = false; st.progress = 0; clearInterval(playTimer); }
+        renderMain(); renderInsp(); placeNotes(); return;
+      }
+      case "play": return togglePlay();
+      case "open": return toast("In the app, this opens the file in your usual viewer.");
+      case "reveal": return toast("In the app, this opens the folder with the file selected.");
+      case "vlc": return toast("In the app, this opens the video in VLC.");
+      case "dtab": st.dTab = el.dataset.tab; st.chosen.clear(); st.notice = ""; return renderMain();
+      case "find": return find();
+      case "stop": st.scanning = null; clearInterval(scanTimer); st.notice = "Search stopped. What was checked so far is kept."; return renderMain();
+      case "extras": el.dataset.ids.split(",").map(Number).forEach((id) => { if (online(files.find((f) => f.id === id))) st.chosen.add(id); }); return renderMain();
+      case "extras-all": groups("exact").forEach((g) => g.slice(1).forEach((f) => online(f) && st.chosen.add(f.id))); return renderMain();
+      case "clear": st.chosen.clear(); return renderMain();
+      case "trash": return trash();
+    }
+  });
+  win.addEventListener("change", (e) => {
+    const el = e.target; const act = el.dataset.act;
+    if (act === "cam") { const c = el.dataset.cam; el.checked ? st.cams.add(c) : st.cams.delete(c); renderMain(); renderSide(); }
+    else if (act === "choose") { const id = +el.dataset.id; el.checked ? st.chosen.add(id) : st.chosen.delete(id); renderMain(); }
+    else if (act === "sub") { st.sub = el.checked; render(); }
+  });
+  win.addEventListener("input", (e) => {
+    if (e.target.id === "q") { st.text = e.target.value.trim(); renderSide(); renderMain(true); renderInsp(); }
+    else if (e.target.dataset.act === "size") { st.tile = +e.target.value; $("grid").style.setProperty("--tile", `${st.tile}px`); }
+  });
+  win.addEventListener("keydown", (e) => {
+    const row = e.target.closest('[data-act="drive"][role="button"]');
+    if (row && (e.key === "Enter" || e.key === " ") && e.target === row) { e.preventDefault(); row.click(); }
+    if (e.key === "Escape" && st.camOpen) { st.camOpen = false; renderMain(); }
+  });
+  document.addEventListener("click", (e) => { if (st.camOpen && !e.target.closest(".pop") && !win.contains(e.target)) { st.camOpen = false; renderMain(); } });
+
+  // ---------- grease-pencil notes ----------
+  let drawn = false, fontsReady = !(document.fonts && document.fonts.ready);
+  function wobblyLoop(cx, cy, rx, ry, seed) {
+    const r = rng(seed); let d = "";
+    for (let i = 0; i <= 28; i++) {
+      const a = -0.6 + (i / 28) * (Math.PI * 2 + 0.5), k = 1 + (r() - 0.5) * 0.08;
+      const x = cx + Math.cos(a) * rx * k, y = cy + Math.sin(a) * ry * k;
+      d += (i ? " L" : "M") + x.toFixed(1) + " " + y.toFixed(1);
+    }
+    return d;
+  }
+  function arrow(x1, y1, x2, y2, bend) {
+    const mx = (x1 + x2) / 2 + bend, my = (y1 + y2) / 2 - Math.abs(bend) * 0.3;
+    const ang = Math.atan2(y2 - my, x2 - mx), L = 11;
+    const h1 = [x2 - L * Math.cos(ang - 0.45), y2 - L * Math.sin(ang - 0.45)], h2 = [x2 - L * Math.cos(ang + 0.45), y2 - L * Math.sin(ang + 0.45)];
+    return `M${x1} ${y1} Q${mx} ${my} ${x2} ${y2} M${h1[0]} ${h1[1]} L${x2} ${y2} L${h2[0]} ${h2[1]}`;
+  }
+  function placeNotes() {
+    const stage = $("demo"), notes = $("notes"); if (getComputedStyle(notes).display === "none") return;
+    const sr = stage.getBoundingClientRect();
+    const sw = $("sw-2"), tab = $("tab-dupes"), np = $("note-plug"), nd = $("note-dupes"), winR = $("win").getBoundingClientRect();
+    let paths = "";
+    if (sw) {
+      const r = sw.getBoundingClientRect();
+      const cx = r.left + r.width / 2 - sr.left, cy = r.top + r.height / 2 - sr.top;
+      np.style.left = `${Math.max(16, winR.left - sr.left - 6)}px`; np.style.top = "26px";
+      const nr = np.getBoundingClientRect();
+      paths += `<path class="ink" style="--delay:.2s" d="${wobblyLoop(cx, cy, 26, 17, 7)}"/>`;
+      paths += `<path class="ink" style="--delay:.55s" d="${arrow(nr.right - sr.left - 30, nr.bottom - sr.top + 2, cx + 6, cy - 20, -40)}"/>`;
+    }
+    if (tab && st.mode === "browse") {
+      const r = tab.getBoundingClientRect();
+      const cx = r.left + r.width / 2 - sr.left, cy = r.top + r.height / 2 - sr.top;
+      nd.style.display = "";
+      nd.style.left = `${Math.min(sr.width - 260, cx + 70)}px`; nd.style.top = "34px";
+      const nr = nd.getBoundingClientRect();
+      paths += `<path class="ink" style="--delay:1s" d="${wobblyLoop(cx + 2, cy, r.width / 2 + 5, r.height / 2 + 8, 3)}"/>`;
+      paths += `<path class="ink" style="--delay:1.3s" d="${arrow(nr.left - sr.left + 10, nr.bottom - sr.top + 4, cx + r.width / 2 - 4, cy - 16, 30)}"/>`;
+    } else nd.style.display = "none";
+    $("ink").innerHTML = paths;
+    if (!fontsReady) { notes.style.visibility = "hidden"; return; }
+    notes.style.visibility = "";
+    if (!drawn) {
+      $("ink").querySelectorAll(".ink").forEach((p) => p.style.setProperty("--len", Math.ceil(p.getTotalLength())));
+      np.style.setProperty("--delay", ".1s"); nd.style.setProperty("--delay", ".9s");
+      notes.classList.add("drawing"); drawn = true;
+    } else {
+      notes.classList.remove("drawing");
+    }
+  }
+  addEventListener("resize", () => placeNotes());
+
+  // ---------- theme ----------
+  const themeBtn = $("theme");
+  const systemDark = () => matchMedia("(prefers-color-scheme: dark)").matches;
+  function applyTheme(t) {
+    if (t) document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme;
+    const dark = t ? t === "dark" : systemDark();
+    themeBtn.textContent = dark ? "Light mode" : "Dark mode";
+  }
+  let saved = null; try { saved = localStorage.getItem("rummage-theme"); } catch {}
+  applyTheme(saved);
+  themeBtn.addEventListener("click", () => {
+    const dark = document.documentElement.dataset.theme ? document.documentElement.dataset.theme === "dark" : systemDark();
+    const next = dark ? "light" : "dark"; applyTheme(next);
+    try { localStorage.setItem("rummage-theme", next); } catch {}
+  });
+
+  render();
+  // Fonts change text widths; re-place the notes once they have loaded, then draw them.
+  if (!fontsReady) document.fonts.ready.then(() => { fontsReady = true; cache.clear(); render(); });
+})();
+</script>
+</body>
+</html>
