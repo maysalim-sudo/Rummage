@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { getVersion } from "@tauri-apps/api/app";
   import { ask } from "@tauri-apps/plugin-dialog";
   import {
     api,
@@ -49,6 +50,8 @@
   let editing = $state<number | null>(null);
   let editLabel = $state("");
   let lastChangeNotice = 0;
+  let version = $state("");
+  getVersion().then((v) => (version = v));
 
   const catalogued = $derived(volumes.filter((v) => v.id !== null));
   const available = $derived(volumes.filter((v) => v.id === null));
@@ -271,6 +274,8 @@
       </div>
     </section>
   {/if}
+
+  {#if version}<div class="version muted">Rummage {version}</div>{/if}
 </nav>
 
 <style>
@@ -357,6 +362,10 @@
   }
   .rename {
     width: 100%;
+  }
+  .version {
+    margin: 16px 8px 0;
+    font-size: 11px;
   }
   .drive-row {
     display: flex;

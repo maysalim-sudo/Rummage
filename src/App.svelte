@@ -21,6 +21,7 @@
   import FileGrid from "./lib/FileGrid.svelte";
   import Inspector from "./lib/Inspector.svelte";
   import DupesView from "./lib/DupesView.svelte";
+  import UpdateBanner from "./lib/UpdateBanner.svelte";
   import MultiSelect, { type Option } from "./lib/MultiSelect.svelte";
 
   type View = "grid" | "list";
@@ -274,6 +275,7 @@
     </aside>
 
     <main>
+      <UpdateBanner />
       <div class="toolbar">
         <div class="segmented" role="tablist" aria-label="Mode">
           <button role="tab" aria-selected={mode === "browse"} class:on={mode === "browse"} onclick={() => (mode = "browse")}>Browse</button>

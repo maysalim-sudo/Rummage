@@ -1,14 +1,43 @@
-//! Running the external ffmpeg / ffprobe tools.
+//! Running the external tools: ffmpeg / ffprobe and ImageMagick.
+//!
+//! Release builds ship them in a `tools` resource folder (`tools/ffmpeg`, `tools/ffprobe`,
+//! and ImageMagick as `tools/magick/AppRun` on Linux or `tools/magick/magick.exe` on Windows).
+//! Without that folder, as in development, they are looked up on the PATH.
 
 use anyhow::{bail, Context, Result};
 use std::io::Read;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-/// A command for `name` (looked up on PATH for now; bundled with installers in milestone 8).
+static BUNDLED_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// Uses the tools in `dir` when it exists (called once at startup with the resource folder).
+pub fn set_bundled_dir(dir: PathBuf) {
+    if dir.is_dir() {
+        let _ = BUNDLED_DIR.set(dir);
+    }
+}
+
+fn program(name: &str) -> PathBuf {
+    if let Some(dir) = BUNDLED_DIR.get() {
+        let candidates = if cfg!(windows) {
+            [dir.join(format!("{name}.exe")), dir.join(name).join(format!("{name}.exe"))]
+        } else {
+            [dir.join(name), dir.join(name).join("AppRun")]
+        };
+        if let Some(found) = candidates.into_iter().find(|p| p.is_file()) {
+            return found;
+        }
+    }
+    PathBuf::from(name)
+}
+
+/// A command for the tool `name`: the bundled copy if there is one, else the one on the PATH.
 pub fn command(name: &str) -> Command {
     #[allow(unused_mut)]
-    let mut cmd = Command::new(name);
+    let mut cmd = Command::new(program(name));
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

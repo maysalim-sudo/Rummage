@@ -40,3 +40,13 @@ Needed in Squeue first: the Linux port, phases 1–2 (Core + `squeue` CLI; plan 
 - Tests: `cd src-tauri && cargo test`; manual checks on real files are `#[ignore]` tests (`detect_on_this_machine`, `render_real_files`, `stream_real_video`).
 - Runtime tools for now: `ffmpeg`/`ffprobe`, ImageMagick 7 (`magick`) with Ghostscript.
 - The project folder is still named `media-catalog`; settings fall back to the old `~/.config/media-catalog` folder.
+
+## Release setup — in progress (branch `rename-and-duplicates`)
+
+Done: updater plugin + "update available" banner, signing key pair (`~/.tauri/rummage.key`, never committed — back it up; without it no further updates can be signed), `tauri.release.linux.json` / `tauri.release.windows.json` (bundle `tools/` as resources), bundled-tool lookup in `tools.rs`, `scripts/fetch-tools.sh` / `.ps1`.
+
+Left:
+1. `fetch-tools.sh`: ffmpeg works; the ImageMagick AppImage URL (`imagemagick.org/archive/binaries/magick`) returns 404 — find the current Linux download (or build the AppImage from distro packages) and verify `fetch-tools.ps1` on Windows.
+2. Local release build: `pnpm tauri build --config src-tauri/tauri.release.linux.json`, then check the AppImage finds the bundled tools.
+3. `.github/workflows/release.yml` (tauri-action, ubuntu + windows matrix, tag `v*`), CI test workflow.
+4. With the user's OK: choose a license, push to GitHub, add `TAURI_SIGNING_PRIVATE_KEY` (+ empty password) as repo secrets, tag `v0.1.0`.

@@ -32,6 +32,23 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "createUpdaterArtifacts": true,
+    "category": "Photography",
+    "shortDescription": "Find every photo and video across all your drives",
+    "longDescription": "Rummage scans all your drives into one searchable catalog of images, RAW photos, design files and videos, with thumbnails, filters, a folder tree, previews, video playback and a duplicate finder. It works even when a drive is unplugged.",
+    "publisher": "Salim May",
+    "homepage": "https://github.com/maysalim-sudo/Rummage"
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDAzNzZERTcxRkZCNjQwQTUKUldTbFFMYi9jZDUyQXpEVTJoTDN3ODRzWmMzSlM2aXRVeW1aUzgvZVFPcXkxZldvVTZDWW1vL0gK",
+      "endpoints": [
+        "https://github.com/maysalim-sudo/Rummage/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

@@ -4,3 +4,6 @@ src-tauri/target/
 src-tauri/gen/schemas/
 # Machine-specific Cargo settings (build output location); see README.
 src-tauri/.cargo/config.toml
+
+# Tools downloaded for release builds by scripts/fetch-tools.*
+tools/

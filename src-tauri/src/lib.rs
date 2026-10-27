@@ -737,8 +737,13 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(AppState::load())
         .setup(|app| {
+            if let Ok(resources) = app.path().resource_dir() {
+                tools::set_bundled_dir(resources.join("tools"));
+            }
             let handle = app.handle().clone();
             let resolve: video::Resolve = Arc::new(move |id| file_path(&handle.state::<AppState>(), id).ok());
             match video::start(resolve) {
