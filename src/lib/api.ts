@@ -49,19 +49,26 @@ export interface ScanFinished {
 
 export type Orientation = "landscape" | "portrait" | "square";
 
+/** min inclusive, max exclusive; null = open end. */
+export interface Range {
+  min: number | null;
+  max: number | null;
+}
+
+/** File filters. Each list matches any of its values; an empty list means "any". */
 export interface FileQuery {
   text?: string;
   volumeId?: number | null;
-  kind?: MediaKind | null;
+  kinds?: MediaKind[];
   includeMissing?: boolean;
   sort?: Sort;
-  minSide?: number | null;
-  orientation?: Orientation | null;
+  /** Ranges for the longer side, in pixels. */
+  sideRanges?: Range[];
+  orientations?: Orientation[];
   dateFrom?: number | null;
   dateTo?: number | null;
-  camera?: string | null;
-  minDurationMs?: number | null;
-  maxDurationMs?: number | null;
+  cameras?: string[];
+  durationRanges?: Range[];
   /** Volume-relative folder ('' = drive root); needs volumeId. */
   folder?: string | null;
   /** Only files directly in `folder`, not its subfolders. */
@@ -154,7 +161,8 @@ export const api = {
   fileDetails: (id: number) => invoke<FileDetails>("file_details", { id }),
   listFolders: (volumeId: number, parent: string, includeMissing: boolean) =>
     invoke<Folder[]>("list_folders", { volumeId, parent, includeMissing }),
-  listCameras: () => invoke<CameraCount[]>("list_cameras"),
+  /** Cameras among files matching `query` (its own camera filter is ignored). */
+  listCameras: (query: FileQuery) => invoke<CameraCount[]>("list_cameras", { query }),
   openFile: (id: number) => invoke<void>("open_file", { id }),
   revealFile: (id: number) => invoke<void>("reveal_file", { id }),
   openInVlc: (id: number) => invoke<void>("open_in_vlc", { id }),

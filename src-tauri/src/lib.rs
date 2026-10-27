@@ -506,9 +506,9 @@ fn list_folders(
 }
 
 #[tauri::command]
-fn list_cameras(state: State<AppState>) -> CmdResult<Vec<query::CameraCount>> {
+fn list_cameras(state: State<AppState>, query: query::FileQuery) -> CmdResult<Vec<query::CameraCount>> {
     let guard = state.catalog()?;
-    query::cameras(&guard.as_ref().unwrap().conn).map_err(err)
+    query::cameras(&guard.as_ref().unwrap().conn, &query).map_err(err)
 }
 
 fn file_path(state: &AppState, id: i64) -> CmdResult<PathBuf> {

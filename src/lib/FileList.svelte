@@ -7,11 +7,13 @@
     files,
     selected = $bindable(),
     labels,
+    emptyMessage,
     onOpen,
   }: {
     files: PagedFiles;
     selected: { id: number; index: number } | null;
     labels: Map<number, string>;
+    emptyMessage: string;
     onOpen: (row: FileRow) => void;
   } = $props();
 
@@ -114,7 +116,7 @@
       {/each}
     </div>
     {#if files.loaded && files.total === 0}
-      <div class="empty muted">No files match. Add a drive on the left, or change the filters.</div>
+      <div class="empty muted">{emptyMessage}</div>
     {/if}
   </div>
 </div>

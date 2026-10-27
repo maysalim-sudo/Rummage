@@ -23,23 +23,30 @@ pub enum Orientation {
     Square,
 }
 
+/// A numeric range: `min` inclusive, `max` exclusive; either end may be open.
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
+pub struct Range {
+    pub min: Option<i64>,
+    pub max: Option<i64>,
+}
+
+/// File filters. Each list filter matches any of its values; an empty list means "any".
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct FileQuery {
     pub text: Option<String>,
     pub volume_id: Option<i64>,
-    pub kind: Option<MediaKind>,
+    pub kinds: Vec<MediaKind>,
     pub include_missing: bool,
     pub sort: Sort,
-    /// Minimum length of the longer side, in pixels.
-    pub min_side: Option<i64>,
-    pub orientation: Option<Orientation>,
+    /// Ranges for the longer side, in pixels.
+    pub side_ranges: Vec<Range>,
+    pub orientations: Vec<Orientation>,
     /// Unix seconds, inclusive; compared with the date taken (or modified).
     pub date_from: Option<i64>,
     pub date_to: Option<i64>,
-    pub camera: Option<String>,
-    pub min_duration_ms: Option<i64>,
-    pub max_duration_ms: Option<i64>,
+    pub cameras: Vec<String>,
+    pub duration_ranges: Vec<Range>,
     /// Volume-relative folder ('' = drive root); only used together with `volume_id`.
     pub folder: Option<String>,
     /// Only files directly in `folder`, not in its subfolders.
@@ -151,24 +158,25 @@ fn fts_query(text: &str) -> Option<String> {
     (!terms.is_empty()).then(|| terms.join(" "))
 }
 
-pub fn query(conn: &Connection, q: &FileQuery, offset: i64, limit: i64) -> Result<Page> {
-    let mut conditions: Vec<&str> = Vec::new();
+/// Builds the `WHERE …` clause (empty if no filters) and its arguments for a query.
+fn filter_sql(q: &FileQuery) -> (String, Vec<Value>) {
+    let mut conditions: Vec<String> = Vec::new();
     let mut args: Vec<Value> = Vec::new();
 
     if !q.include_missing {
-        conditions.push("missing = 0");
+        conditions.push("missing = 0".into());
     }
     if let Some(volume_id) = q.volume_id {
-        conditions.push("volume_id = ?");
+        conditions.push("volume_id = ?".into());
         args.push(volume_id.into());
         match q.folder.as_deref() {
             Some(folder) if q.direct_only => {
-                conditions.push("dir = ?");
+                conditions.push("dir = ?".into());
                 args.push(folder.to_string().into());
             }
             Some(folder) if !folder.is_empty() => {
                 // '0' is the character right after '/', so this range is "folder/…" and uses the index.
-                conditions.push("(dir = ? OR (dir >= ? AND dir < ?))");
+                conditions.push("(dir = ? OR (dir >= ? AND dir < ?))".into());
                 args.push(folder.to_string().into());
                 args.push(format!("{folder}/").into());
                 args.push(format!("{folder}0").into());
@@ -176,49 +184,86 @@ pub fn query(conn: &Connection, q: &FileQuery, offset: i64, limit: i64) -> Resul
             _ => {}
         }
     }
-    if let Some(kind) = q.kind {
-        conditions.push("kind = ?");
-        args.push(kind.as_i64().into());
+    if !q.kinds.is_empty() {
+        conditions.push(in_list("kind", q.kinds.len()));
+        args.extend(q.kinds.iter().map(|k| Value::from(k.as_i64())));
     }
     if let Some(fts) = q.text.as_deref().and_then(fts_query) {
-        conditions.push("id IN (SELECT rowid FROM files_fts WHERE files_fts MATCH ?)");
+        conditions.push("id IN (SELECT rowid FROM files_fts WHERE files_fts MATCH ?)".into());
         args.push(fts.into());
     }
-    if let Some(min_side) = q.min_side {
-        conditions.push("max(width, height) >= ?");
-        args.push(min_side.into());
+    if let Some(sql) = ranges_sql("max(width, height)", &q.side_ranges, &mut args) {
+        conditions.push(sql);
     }
-    match q.orientation {
-        Some(Orientation::Landscape) => conditions.push("width > height"),
-        Some(Orientation::Portrait) => conditions.push("height > width"),
-        Some(Orientation::Square) => conditions.push("width = height"),
-        None => {}
+    if !q.orientations.is_empty() {
+        let any: Vec<&str> = q
+            .orientations
+            .iter()
+            .map(|o| match o {
+                Orientation::Landscape => "width > height",
+                Orientation::Portrait => "height > width",
+                Orientation::Square => "width = height",
+            })
+            .collect();
+        conditions.push(format!("({})", any.join(" OR ")));
     }
     if let Some(from) = q.date_from {
-        conditions.push("sort_date >= ?");
+        conditions.push("sort_date >= ?".into());
         args.push(from.into());
     }
     if let Some(to) = q.date_to {
-        conditions.push("sort_date <= ?");
+        conditions.push("sort_date <= ?".into());
         args.push(to.into());
     }
-    if let Some(camera) = q.camera.as_ref().filter(|c| !c.is_empty()) {
-        conditions.push("camera = ?");
-        args.push(camera.clone().into());
+    if !q.cameras.is_empty() {
+        conditions.push(in_list("camera", q.cameras.len()));
+        args.extend(q.cameras.iter().map(|c| Value::from(c.clone())));
     }
-    if let Some(min) = q.min_duration_ms {
-        conditions.push("duration_ms >= ?");
-        args.push(min.into());
+    if let Some(sql) = ranges_sql("duration_ms", &q.duration_ranges, &mut args) {
+        conditions.push(sql);
     }
-    if let Some(max) = q.max_duration_ms {
-        conditions.push("duration_ms <= ?");
-        args.push(max.into());
-    }
+
     let where_sql = if conditions.is_empty() {
         String::new()
     } else {
         format!("WHERE {}", conditions.join(" AND "))
     };
+    (where_sql, args)
+}
+
+fn in_list(column: &str, n: usize) -> String {
+    format!("{column} IN ({})", vec!["?"; n].join(", "))
+}
+
+/// `(expr in range 1 OR expr in range 2 …)`, or None for no ranges.
+fn ranges_sql(expr: &str, ranges: &[Range], args: &mut Vec<Value>) -> Option<String> {
+    if ranges.is_empty() {
+        return None;
+    }
+    let any: Vec<String> = ranges
+        .iter()
+        .map(|r| {
+            let mut parts = Vec::new();
+            if let Some(min) = r.min {
+                parts.push(format!("{expr} >= ?"));
+                args.push(min.into());
+            }
+            if let Some(max) = r.max {
+                parts.push(format!("{expr} < ?"));
+                args.push(max.into());
+            }
+            if parts.is_empty() {
+                format!("{expr} IS NOT NULL")
+            } else {
+                format!("({})", parts.join(" AND "))
+            }
+        })
+        .collect();
+    Some(format!("({})", any.join(" OR ")))
+}
+
+pub fn query(conn: &Connection, q: &FileQuery, offset: i64, limit: i64) -> Result<Page> {
+    let (where_sql, args) = filter_sql(q);
     let order_sql = match q.sort {
         Sort::Newest => "sort_date DESC, id DESC",
         Sort::Oldest => "sort_date ASC, id ASC",
@@ -314,14 +359,20 @@ pub fn folders(conn: &Connection, volume_id: i64, parent: &str, include_missing:
     Ok(children.into_values().collect())
 }
 
-/// Cameras in the catalog, most used first.
-pub fn cameras(conn: &Connection) -> Result<Vec<CameraCount>> {
-    let mut stmt = conn.prepare(
-        "SELECT camera, COUNT(*) FROM files WHERE camera IS NOT NULL AND missing = 0
-         GROUP BY camera ORDER BY 2 DESC LIMIT 300",
-    )?;
+/// Cameras among the files matching `q` (ignoring its own camera filter), most used first,
+/// so the counts match what selecting a camera will show.
+pub fn cameras(conn: &Connection, q: &FileQuery) -> Result<Vec<CameraCount>> {
+    let q = FileQuery { cameras: Vec::new(), ..q.clone() };
+    let (where_sql, args) = filter_sql(&q);
+    let joiner = if where_sql.is_empty() { "WHERE" } else { " AND" };
+    // Only files with a camera can count, and they are a small part of the catalog: start
+    // from that index, or SQLite may read every row matching e.g. "images" (slow on an HDD).
+    let mut stmt = conn.prepare(&format!(
+        "SELECT camera, COUNT(*) FROM files INDEXED BY files_camera {where_sql}{joiner} camera IS NOT NULL
+         GROUP BY camera ORDER BY 2 DESC, 1 LIMIT 500"
+    ))?;
     let list = stmt
-        .query_map([], |r| Ok(CameraCount { camera: r.get(0)?, count: r.get(1)? }))?
+        .query_map(params_from_iter(args.iter()), |r| Ok(CameraCount { camera: r.get(0)?, count: r.get(1)? }))?
         .collect::<rusqlite::Result<_>>()?;
     Ok(list)
 }
@@ -353,7 +404,7 @@ mod tests {
         assert_eq!(all.total, 3);
         assert_eq!(all.rows[0].name, "beach_sunset.jpg"); // newest first, missing hidden
 
-        let videos = query(&conn, &FileQuery { kind: Some(MediaKind::Video), ..Default::default() }, 0, 50).unwrap();
+        let videos = query(&conn, &FileQuery { kinds: vec![MediaKind::Video], ..Default::default() }, 0, 50).unwrap();
         assert_eq!(videos.total, 1);
 
         let on_b = query(&conn, &FileQuery { volume_id: Some(2), include_missing: true, ..Default::default() }, 0, 50).unwrap();
@@ -420,19 +471,34 @@ mod tests {
         .unwrap();
         let count = |q: FileQuery| query(&conn, &q, 0, 50).unwrap().total;
 
-        assert_eq!(count(FileQuery { min_side: Some(3840), ..Default::default() }), 2);
-        assert_eq!(count(FileQuery { orientation: Some(Orientation::Portrait), ..Default::default() }), 1);
-        assert_eq!(count(FileQuery { orientation: Some(Orientation::Square), ..Default::default() }), 1);
-        assert_eq!(count(FileQuery { camera: Some("Canon EOS R5".into()), ..Default::default() }), 1);
-        assert_eq!(count(FileQuery { min_duration_ms: Some(30_000), ..Default::default() }), 1);
+        let range = |min, max| Range { min, max };
+        assert_eq!(count(FileQuery { side_ranges: vec![range(Some(3840), None)], ..Default::default() }), 2);
+        // Several ranges: Full HD-only (1920 to under 3840) or very large (6000+).
+        let sides = vec![range(Some(1920), Some(3840)), range(Some(6000), None)];
+        assert_eq!(count(FileQuery { side_ranges: sides, ..Default::default() }), 2);
+        assert_eq!(count(FileQuery { orientations: vec![Orientation::Portrait], ..Default::default() }), 1);
+        let both = vec![Orientation::Portrait, Orientation::Square];
+        assert_eq!(count(FileQuery { orientations: both, ..Default::default() }), 2);
+        assert_eq!(count(FileQuery { cameras: vec!["Canon EOS R5".into()], ..Default::default() }), 1);
+        let cams = vec!["Canon EOS R5".into(), "NIKON Z 6".into()];
+        assert_eq!(count(FileQuery { cameras: cams, ..Default::default() }), 2);
+        assert_eq!(count(FileQuery { kinds: vec![MediaKind::Video, MediaKind::Raw], ..Default::default() }), 2);
+        let long = vec![range(Some(30_000), None)];
+        assert_eq!(count(FileQuery { duration_ranges: long, ..Default::default() }), 1);
+        let short = vec![range(None, Some(30_000))];
+        assert_eq!(count(FileQuery { duration_ranges: short, ..Default::default() }), 0);
         // Date taken (5) wins over mtime (30) for the sunset photo.
         assert_eq!(count(FileQuery { date_to: Some(9), ..Default::default() }), 1);
 
         let oldest = query(&conn, &FileQuery { sort: Sort::Oldest, ..Default::default() }, 0, 1).unwrap();
         assert_eq!(oldest.rows[0].name, "beach_sunset.jpg");
 
-        let cams = cameras(&conn).unwrap();
+        let cams = cameras(&conn, &FileQuery::default()).unwrap();
         assert_eq!(cams.len(), 2);
+        // Counts follow the other filters (drive 1 has only the Canon), not the camera filter itself.
+        let on_drive_1 = FileQuery { volume_id: Some(1), cameras: vec!["NIKON Z 6".into()], ..Default::default() };
+        let cams = cameras(&conn, &on_drive_1).unwrap();
+        assert_eq!(cams.iter().map(|c| (c.camera.as_str(), c.count)).collect::<Vec<_>>(), [("Canon EOS R5", 1)]);
 
         let id = oldest.rows[0].id;
         let d = details(&conn, id).unwrap();

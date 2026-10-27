@@ -8,6 +8,7 @@
     type FileRow,
     type MediaKind,
     type Orientation,
+    type Range,
     type SetupInfo,
     type Sort,
     type Volume,
@@ -19,9 +20,42 @@
   import FileList from "./lib/FileList.svelte";
   import FileGrid from "./lib/FileGrid.svelte";
   import Inspector from "./lib/Inspector.svelte";
+  import MultiSelect, { type Option } from "./lib/MultiSelect.svelte";
 
   type View = "grid" | "list";
-  type Duration = "" | "short" | "medium" | "long";
+
+  const kindOptions: Option[] = [
+    { value: "image", label: "Images" },
+    { value: "video", label: "Videos" },
+    { value: "raw", label: "RAW photos" },
+    { value: "design", label: "Design files (AI, EPS, PDF, Figma)" },
+  ];
+
+  /** Longer-side buckets; selecting several matches any of them. */
+  const sideBuckets: (Option & Range)[] = [
+    { value: "small", label: "Small (under 1280 px)", min: null, max: 1280 },
+    { value: "hd", label: "HD (1280–1919)", min: 1280, max: 1920 },
+    { value: "fhd", label: "Full HD (1920–3839)", min: 1920, max: 3840 },
+    { value: "4k", label: "4K (3840–5999)", min: 3840, max: 6000 },
+    { value: "huge", label: "Very large (6000+)", min: 6000, max: null },
+  ];
+
+  const orientationOptions: Option[] = [
+    { value: "landscape", label: "Landscape" },
+    { value: "portrait", label: "Portrait" },
+    { value: "square", label: "Square" },
+  ];
+
+  const durationBuckets: (Option & Range)[] = [
+    { value: "short", label: "Under 30 s", min: null, max: 30_000 },
+    { value: "medium", label: "30 s – 5 min", min: 30_000, max: 300_000 },
+    { value: "long", label: "5 – 30 min", min: 300_000, max: 1_800_000 },
+    { value: "verylong", label: "Over 30 min", min: 1_800_000, max: null },
+  ];
+
+  function ranges(buckets: (Option & Range)[], chosen: string[]): Range[] {
+    return buckets.filter((b) => chosen.includes(b.value)).map(({ min, max }) => ({ min, max }));
+  }
 
   let setup = $state<SetupInfo | null>(null);
   let volumes = $state<Volume[]>([]);
@@ -34,15 +68,15 @@
   let includeSubfolders = $state(true);
   let text = $state("");
   let searchText = $state("");
-  let kind = $state<MediaKind | null>(null);
+  let kinds = $state<string[]>([]);
   let sort = $state<Sort>("newest");
   let includeMissing = $state(false);
-  let minSide = $state<number | null>(null);
-  let orientation = $state<Orientation | null>(null);
-  let camera = $state("");
+  let sides = $state<string[]>([]);
+  let orientations = $state<string[]>([]);
+  let chosenCameras = $state<string[]>([]);
   let dateFrom = $state("");
   let dateTo = $state("");
-  let duration = $state<Duration>("");
+  let durations = $state<string[]>([]);
 
   // View
   let view = $state<View>(loadPref("view", "grid") as View);
@@ -61,28 +95,39 @@
     return Date.UTC(y, m - 1, d) / 1000 + (endOfDay ? 86_399 : 0);
   }
 
-  const durationRanges: Record<Duration, [number | null, number | null]> = {
-    "": [null, null],
-    short: [null, 30_000],
-    medium: [30_000, 300_000],
-    long: [300_000, null],
-  };
-
   const query = $derived<FileQuery>({
     text: searchText,
     volumeId: selectedVolume,
-    kind,
+    kinds: kinds as MediaKind[],
     includeMissing,
     sort,
-    minSide,
-    orientation,
-    camera: camera || null,
+    sideRanges: ranges(sideBuckets, sides),
+    orientations: orientations as Orientation[],
+    cameras: chosenCameras,
     dateFrom: day(dateFrom),
     dateTo: day(dateTo, true),
-    minDurationMs: durationRanges[duration][0],
-    maxDurationMs: durationRanges[duration][1],
+    durationRanges: ranges(durationBuckets, durations),
     folder: selectedVolume !== null ? selectedFolder : null,
     directOnly: selectedFolder !== null && !includeSubfolders,
+  });
+
+  const cameraOptions = $derived<Option[]>(cameras.map((c) => ({ value: c.camera, label: c.camera, count: c.count })));
+
+  /** What is narrowing the results, for the "no files match" message. */
+  const activeFilters = $derived.by(() => {
+    const list: string[] = [];
+    const pick = (opts: Option[], chosen: string[]) => chosen.map((v) => opts.find((o) => o.value === v)?.label ?? v);
+    if (selectedVolume !== null) list.push(`drive “${labels.get(selectedVolume) ?? "?"}”`);
+    if (selectedFolder) list.push(`folder “${selectedFolder}”${includeSubfolders ? "" : " (no subfolders)"}`);
+    if (searchText) list.push(`search “${searchText}”`);
+    if (kinds.length) list.push(pick(kindOptions, kinds).join(" or "));
+    if (sides.length) list.push(pick(sideBuckets, sides).join(" or "));
+    if (orientations.length) list.push(pick(orientationOptions, orientations).join(" or "));
+    if (chosenCameras.length) list.push(chosenCameras.join(" or "));
+    if (durations.length) list.push(`length ${pick(durationBuckets, durations).join(" or ")}`);
+    if (dateFrom) list.push(`from ${dateFrom}`);
+    if (dateTo) list.push(`to ${dateTo}`);
+    return list;
   });
 
   /** Breadcrumb segments for the selected folder: [label, path]. */
@@ -92,9 +137,32 @@
       : [],
   );
 
-  const filtersActive = $derived(
-    !!(searchText || kind || minSide || orientation || camera || dateFrom || dateTo || duration || includeMissing),
+  const emptyMessage = $derived(
+    activeFilters.length
+      ? `No files match: ${activeFilters.join(" · ")}.`
+      : "No files yet. Add a drive on the left to scan it.",
   );
+
+  const filtersActive = $derived(
+    !!(
+      searchText ||
+      kinds.length ||
+      sides.length ||
+      orientations.length ||
+      chosenCameras.length ||
+      durations.length ||
+      dateFrom ||
+      dateTo ||
+      includeMissing
+    ),
+  );
+
+  // Camera counts follow the other filters (debounced: it is a grouped count over the catalog).
+  $effect(() => {
+    const q = query;
+    const timer = setTimeout(() => loadCameras(q), 300);
+    return () => clearTimeout(timer);
+  });
 
   // untrack: setQuery reads the result count, which must not re-trigger the query.
   $effect(() => {
@@ -142,8 +210,8 @@
 
   function clearFilters() {
     text = searchText = "";
-    kind = minSide = orientation = null;
-    camera = dateFrom = dateTo = duration = "";
+    kinds = sides = orientations = chosenCameras = durations = [];
+    dateFrom = dateTo = "";
     includeMissing = false;
   }
 
@@ -155,9 +223,10 @@
     }
   }
 
-  async function loadCameras() {
+  async function loadCameras(q: FileQuery) {
     try {
-      cameras = await api.listCameras();
+      const list = await api.listCameras(q);
+      if (q === query) cameras = list; // ignore answers for filters already changed
     } catch {
       // Not critical; the list fills in on the next try.
     }
@@ -166,10 +235,7 @@
   onMount(() => {
     let lastRefresh = 0;
     let lastCameras = 0;
-    api.getSetup().then((s) => {
-      setup = s;
-      if (s.catalogDir) loadCameras();
-    });
+    api.getSetup().then((s) => (setup = s));
     // While thumbnails are being made, refresh the visible files every few seconds so they appear.
     const unlisten = onJobsProgress(() => {
       const now = Date.now();
@@ -179,7 +245,7 @@
       }
       if (now - lastCameras > 20_000) {
         lastCameras = now;
-        loadCameras();
+        loadCameras(untrack(() => query));
       }
     });
     return () => {
@@ -225,38 +291,22 @@
       </div>
 
       <div class="toolbar filters">
-        <select bind:value={kind} aria-label="File type">
-          <option value={null}>All types</option>
-          <option value="image">Images</option>
-          <option value="video">Videos</option>
-          <option value="raw">RAW photos</option>
-          <option value="design">Design files (AI, EPS, PDF, Figma)</option>
-        </select>
-        <select bind:value={minSide} aria-label="Resolution">
-          <option value={null}>Any resolution</option>
-          <option value={1280}>HD and up (1280+)</option>
-          <option value={1920}>Full HD and up (1920+)</option>
-          <option value={3840}>4K and up (3840+)</option>
-          <option value={6000}>Very large (6000+)</option>
-        </select>
-        <select bind:value={orientation} aria-label="Orientation">
-          <option value={null}>Any orientation</option>
-          <option value="landscape">Landscape</option>
-          <option value="portrait">Portrait</option>
-          <option value="square">Square</option>
-        </select>
-        <select bind:value={camera} aria-label="Camera">
-          <option value="">Any camera</option>
-          {#each cameras as c (c.camera)}
-            <option value={c.camera}>{c.camera} ({formatCount(c.count)})</option>
-          {/each}
-        </select>
-        <select bind:value={duration} aria-label="Video length">
-          <option value="">Any length</option>
-          <option value="short">Under 30 s</option>
-          <option value="medium">30 s – 5 min</option>
-          <option value="long">Over 5 min</option>
-        </select>
+        <MultiSelect placeholder="All types" noun="types" options={kindOptions} bind:selected={kinds} />
+        <MultiSelect placeholder="Any resolution" noun="sizes" options={sideBuckets} bind:selected={sides} />
+        <MultiSelect
+          placeholder="Any orientation"
+          noun="orientations"
+          options={orientationOptions}
+          bind:selected={orientations}
+        />
+        <MultiSelect
+          placeholder="Any camera"
+          noun="cameras"
+          options={cameraOptions}
+          bind:selected={chosenCameras}
+          searchable
+        />
+        <MultiSelect placeholder="Any length" noun="lengths" options={durationBuckets} bind:selected={durations} />
         <label>From <input type="date" bind:value={dateFrom} /></label>
         <label>To <input type="date" bind:value={dateTo} /></label>
         <label><input type="checkbox" bind:checked={includeMissing} /> Show deleted</label>
@@ -290,9 +340,9 @@
 
       <div class="content">
         {#if view === "grid"}
-          <FileGrid {files} bind:selected {tileSize} {labels} onOpen={open} />
+          <FileGrid {files} bind:selected {tileSize} {labels} {emptyMessage} onOpen={open} />
         {:else}
-          <FileList {files} bind:selected {labels} onOpen={open} />
+          <FileList {files} bind:selected {labels} {emptyMessage} onOpen={open} />
         {/if}
       </div>
     </main>
