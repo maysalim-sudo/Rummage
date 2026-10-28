@@ -63,3 +63,10 @@ target-dir = "/home/<you>/.cache/media-catalog-target"
 - Settings: `~/.config/rummage/config.json` (`%APPDATA%\rummage` on Windows)
 - Catalog: the folder chosen at first run (default `~/.local/share/rummage`)
 - On each added drive: a small `.mediacat-id` file at the root
+
+## License
+
+Rummage is released under the [MIT License](LICENSE).
+
+Release builds bundle third-party tools under their own licenses: ffmpeg/ffprobe
+(GPL builds; license texts in `tools/licenses`) and ImageMagick (ImageMagick License).

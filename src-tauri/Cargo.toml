@@ -2,6 +2,7 @@
 name = "rummage"
 version = "0.1.0"
 description = "Catalog and browse images and videos across all your drives"
+license = "MIT"
 edition = "2021"
 
 [lib]

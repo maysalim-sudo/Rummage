@@ -50,5 +50,5 @@ Linux ImageMagick notes: `fetch-tools.sh` takes the AppImage from ImageMagick's 
 Workflows (checked with actionlint, not yet run on GitHub): `ci.yml` (svelte-check + frontend build; clippy + tests on Ubuntu and Windows) on every push; `release.yml` on a `v*` tag: checks the tag matches the version, creates a draft release, builds Linux (Ubuntu 22.04: AppImage + .deb) and Windows (NSIS) with tauri-action and uploads the signed files + `latest.json`. Publishing the draft makes the update live. `fetch-tools.ps1` now takes ImageMagick's portable .7z from its GitHub release (untested until the first Windows run).
 
 Left:
-1. With the user's OK: choose a license, push to GitHub, add `TAURI_SIGNING_PRIVATE_KEY` (+ empty `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`) as repo secrets, check CI is green (first Windows build), tag `v0.1.0`, review and publish the draft release.
+1. With the user's OK: push to GitHub (license chosen: MIT, in `LICENSE`), add `TAURI_SIGNING_PRIVATE_KEY` (+ empty `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`) as repo secrets, check CI is green (first Windows build), tag `v0.1.0`, review and publish the draft release.
 2. Publish the landing page (`site/`) together with that release: enable GitHub Pages (source: GitHub Actions) so `pages.yml` deploys it. Kept local until then.
