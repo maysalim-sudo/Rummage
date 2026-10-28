@@ -1,6 +1,6 @@
 # Rummage — where things stand
 
-Last updated 2026-10-27. Architecture and roadmap: [architecture.md](architecture.md).
+Last updated 2026-10-28. Architecture and roadmap: [architecture.md](architecture.md). Continuing on Windows: [HANDOFF-WINDOWS.md](HANDOFF-WINDOWS.md).
 
 ## Done
 
