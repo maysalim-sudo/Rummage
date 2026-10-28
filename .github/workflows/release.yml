@@ -16,7 +16,7 @@ jobs:
     outputs:
       release_id: ${{ steps.release.outputs.id }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Check the tag matches the app version
         run: |
           version="$(jq -r .version src-tauri/tauri.conf.json)"
@@ -50,7 +50,7 @@ jobs:
             config: src-tauri/tauri.release.windows.json
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
@@ -63,7 +63,7 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 12
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm

@@ -291,7 +291,10 @@ mod tests {
             .arg(format!("pdf:{}", ai.display()))
             .status()
             .is_ok_and(|s| s.success());
-        if made {
+        // ImageMagick reads PDFs through Ghostscript, which isn't always installed.
+        let gs = if cfg!(windows) { "gswin64c" } else { "gs" };
+        let has_gs = std::process::Command::new(gs).arg("--version").output().is_ok_and(|o| o.status.success());
+        if made && has_gs {
             assert!(!from_magick(&ai, "ai", THUMB_SIZE).unwrap().is_empty());
         }
     }
