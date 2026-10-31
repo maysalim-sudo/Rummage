@@ -5,6 +5,12 @@ the next session (Claude Code on Windows) together with [STATUS.md](STATUS.md) a
 [architecture.md](architecture.md). The goal there is to make the Windows side work and
 ship the first release, `v0.1.0`.
 
+> **Update 2026-11-01:** steps 1, 2 and 4.1–4.6 below are done. The Windows app was tested on
+> Windows, and [v0.1.0](https://github.com/maysalim-sudo/Rummage/releases/tag/v0.1.0) is
+> published with the landing page live at https://maysalim-sudo.github.io/Rummage/. Still open:
+> testing the updater (4.7), Ghostscript on Windows (3) and the CI cleanup (5).
+> Current state: [STATUS.md](STATUS.md).
+
 ## Working with the user
 
 - Always answer in English (US), whatever language the request is in.
@@ -81,7 +87,7 @@ named `media-catalog`.
   2. Creates a **draft** release.
   3. Builds Linux (on Ubuntu 22.04) and Windows with tauri-action.
   4. Uploads the signed installers and `latest.json`.
-  Nothing reaches users until the draft is published. **It has never run.**
+  Nothing reaches users until the draft is published. It built v0.1.0 on 2026-10-31.
 - The Linux release build was made locally and tested by the user: the AppImage runs, and
   videos, thumbnails and previews work.
 
