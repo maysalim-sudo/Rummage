@@ -65,7 +65,7 @@ named `media-catalog`.
   bundled in release builds into `tools/<os>/` (git-ignored):
   - Linux: static ffmpeg + ffprobe, plus ImageMagick's AppImage from its latest GitHub release, packed as
     `tools/linux/magick.tar.gz`.
-  - Windows: ffmpeg + ffprobe (gyan.dev essentials build) and ImageMagick's
+  - Windows: ffmpeg + ffprobe (Gyan's essentials build, from its GitHub release) and ImageMagick's
     `portable-Q16-HDRI-x64.7z` from its latest GitHub release, extracted to `tools/windows/magick/`.
 - `src-tauri/tauri.release.linux.json` (AppImage with GStreamer bundled, plus .deb) and
   `src-tauri/tauri.release.windows.json` (NSIS installer, per-user install). Each bundles `tools/<os>/` as

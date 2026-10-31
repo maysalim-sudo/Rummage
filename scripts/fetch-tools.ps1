@@ -1,5 +1,5 @@
 # Downloads the tools bundled with Windows release builds into tools\windows:
-# ffmpeg + ffprobe (gyan.dev "essentials" build) and portable ImageMagick.
+# ffmpeg + ffprobe (Gyan's "essentials" build) and portable ImageMagick.
 # Used by the release workflow; run it locally before a local release build.
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
@@ -9,8 +9,16 @@ $tmp = Join-Path ([IO.Path]::GetTempPath()) "rummage-tools"
 Remove-Item -Recurse -Force $dest, $tmp -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $dest, $tmp | Out-Null
 
-Write-Host "Downloading ffmpeg (gyan.dev essentials build)..."
-Invoke-WebRequest "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile "$tmp\ffmpeg.zip"
+$headers = @{}
+if ($env:GITHUB_TOKEN) { $headers.Authorization = "Bearer $env:GITHUB_TOKEN" }
+
+# Gyan's GitHub copy of the builds: www.gyan.dev can throttle downloads to a few KB/s.
+Write-Host "Downloading ffmpeg (Gyan's essentials build, from its latest GitHub release)..."
+$release = Invoke-RestMethod "https://api.github.com/repos/GyanD/codexffmpeg/releases/latest" -Headers $headers
+$asset = $release.assets | Where-Object { $_.name -match "essentials_build\.zip$" } | Select-Object -First 1
+if (-not $asset) { throw "No essentials ffmpeg build in release $($release.tag_name)" }
+Write-Host "  $($asset.browser_download_url)"
+Invoke-WebRequest $asset.browser_download_url -OutFile "$tmp\ffmpeg.zip"
 Expand-Archive "$tmp\ffmpeg.zip" "$tmp\ffmpeg"
 foreach ($exe in "ffmpeg.exe", "ffprobe.exe") {
     Copy-Item (Get-ChildItem "$tmp\ffmpeg" -Recurse -Filter $exe | Select-Object -First 1).FullName $dest
@@ -19,8 +27,6 @@ New-Item -ItemType Directory -Force "$dest\licenses" | Out-Null
 Get-ChildItem "$tmp\ffmpeg" -Recurse -Filter "LICENSE*" | Select-Object -First 1 | Copy-Item -Destination "$dest\licenses\ffmpeg-LICENSE.txt"
 
 Write-Host "Downloading ImageMagick (portable, from its latest GitHub release)..."
-$headers = @{}
-if ($env:GITHUB_TOKEN) { $headers.Authorization = "Bearer $env:GITHUB_TOKEN" }
 $release = Invoke-RestMethod "https://api.github.com/repos/ImageMagick/ImageMagick/releases/latest" -Headers $headers
 $asset = $release.assets | Where-Object { $_.name -match "portable-Q16-HDRI-x64\.7z$" } | Select-Object -First 1
 if (-not $asset) { throw "No portable ImageMagick build in release $($release.tag_name)" }
