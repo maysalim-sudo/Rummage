@@ -63,7 +63,7 @@ named `media-catalog`.
 
 - `scripts/fetch-tools.sh` (Linux) and `scripts/fetch-tools.ps1` (Windows) download the tools that are
   bundled in release builds into `tools/<os>/` (git-ignored):
-  - Linux: static ffmpeg + ffprobe, plus ImageMagick's AppImage from its latest GitHub release, packed as
+  - Linux: ffmpeg + ffprobe (BtbN's build, from its GitHub release), plus ImageMagick's AppImage from its latest GitHub release, packed as
     `tools/linux/magick.tar.gz`.
   - Windows: ffmpeg + ffprobe (Gyan's essentials build, from its GitHub release) and ImageMagick's
     `portable-Q16-HDRI-x64.7z` from its latest GitHub release, extracted to `tools/windows/magick/`.

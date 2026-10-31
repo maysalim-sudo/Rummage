@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Downloads the tools bundled with Linux release builds into tools/linux:
-# static ffmpeg + ffprobe, and ImageMagick (its official AppImage, extracted so it runs
+# static ffmpeg + ffprobe (BtbN's build), and ImageMagick (its official AppImage, extracted so it runs
 # without FUSE). Used by the release workflow; run it locally before a local release build.
 set -euo pipefail
 
@@ -10,18 +10,25 @@ trap 'rm -rf "$tmp"' EXIT
 rm -rf "$dest"
 mkdir -p "$dest"
 
-echo "Downloading ffmpeg (static build by John Van Sickle)…"
-curl -fsSL https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz -o "$tmp/ffmpeg.tar.xz"
-tar -xJf "$tmp/ffmpeg.tar.xz" -C "$tmp"
-ff_dir="$(find "$tmp" -maxdepth 1 -type d -name 'ffmpeg-*-static' | head -1)"
-cp "$ff_dir/ffmpeg" "$ff_dir/ffprobe" "$dest/"
-mkdir -p "$dest/licenses"
-cp "$ff_dir/GPLv3.txt" "$dest/licenses/ffmpeg-GPLv3.txt" 2>/dev/null || true
-cp "$ff_dir/readme.txt" "$dest/licenses/ffmpeg-readme.txt" 2>/dev/null || true
-
-echo "Downloading ImageMagick (official AppImage from its latest GitHub release)…"
 auth=()
 [[ -n "${GITHUB_TOKEN:-}" ]] && auth=(-H "Authorization: Bearer $GITHUB_TOKEN")
+
+# johnvansickle.com doesn't serve GitHub's runners, so take BtbN's static GPL build of
+# the newest FFmpeg release from GitHub.
+echo "Downloading ffmpeg (static build by BtbN, from its GitHub release)…"
+ff_url="$(curl -fsSL "${auth[@]}" https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest \
+  | grep -o '"browser_download_url": *"[^"]*/ffmpeg-n[0-9.]*-latest-linux64-gpl-[0-9.]*\.tar\.xz"' \
+  | sed 's/.*"\(https[^"]*\)"/\1/' | sort -V | tail -1)"
+[[ -n "$ff_url" ]] || { echo "No ffmpeg linux64 build found in BtbN's latest release" >&2; exit 1; }
+echo "  $ff_url"
+curl -fsSL "$ff_url" -o "$tmp/ffmpeg.tar.xz"
+tar -xJf "$tmp/ffmpeg.tar.xz" -C "$tmp"
+ff_dir="$(find "$tmp" -maxdepth 1 -type d -name 'ffmpeg-*-linux64-gpl-*' | head -1)"
+cp "$ff_dir/bin/ffmpeg" "$ff_dir/bin/ffprobe" "$dest/"
+mkdir -p "$dest/licenses"
+cp "$ff_dir/LICENSE.txt" "$dest/licenses/ffmpeg-LICENSE.txt" 2>/dev/null || true
+
+echo "Downloading ImageMagick (official AppImage from its latest GitHub release)…"
 im_url="$(curl -fsSL "${auth[@]}" https://api.github.com/repos/ImageMagick/ImageMagick/releases/latest \
   | grep -o '"browser_download_url": *"[^"]*-gcc-x86_64\.AppImage"' | head -1 | sed 's/.*"\(https[^"]*\)"/\1/')"
 [[ -n "$im_url" ]] || { echo "No ImageMagick AppImage found in the latest release" >&2; exit 1; }
