@@ -56,14 +56,16 @@ pub fn detect() -> Vec<DetectedVolume> {
         };
 
         // The same device can be mounted several times (btrfs subvolumes, bind
-        // mounts); keep the shortest mount path.
-        match found.iter_mut().find(|(dev, _)| *dev == device) {
+        // mounts); keep the shortest mount path. On Windows the name is only the
+        // volume label, which unlabeled drives share, so each drive letter is its own.
+        let key = if cfg!(windows) { volume.mount.to_string_lossy().to_string() } else { device };
+        match found.iter_mut().find(|(dev, _)| *dev == key) {
             Some((_, existing)) => {
                 if volume.mount.as_os_str().len() < existing.mount.as_os_str().len() {
                     *existing = volume;
                 }
             }
-            None => found.push((device, volume)),
+            None => found.push((key, volume)),
         }
     }
 
