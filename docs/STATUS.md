@@ -14,16 +14,17 @@ Last updated 2026-11-01. Architecture and roadmap: [architecture.md](architectur
 | 5. Duplicates | Exact copies (size → quick hash → full BLAKE3, stored in the catalog) and similar photos (thumbnail difference hash, banded search); review screen; move to the system trash with last-copy protection |
 | 8. First release (early) | [v0.1.0](https://github.com/maysalim-sudo/Rummage/releases/tag/v0.1.0) published 2026-10-31: Linux AppImage + `.deb` and Windows installer, signed for the Tauri updater; ffmpeg and ImageMagick bundled; landing page live at https://maysalim-sudo.github.io/Rummage/ |
 
+| — Redesign (0.2.0) | Photo-first library: justified grid laid out from packed date and shape data (`file_layout`, 341k files in under 200 ms), month groups, timeline, smart search bar, drive strip, folder panel, multi-select, Compare, Find similar, full-screen viewer showing known copies; Ghostscript bundled on Windows |
+
 Tested on the author's machine: 6 drives (3 physical disks), ~415k files, Kubuntu 26.04, catalog on an HDD.
 
 ## Next
 
 1. **Try the duplicate finder on the real catalog** (first run reads ~290k same-size candidates and fingerprints existing thumbnails).
-2. **Test the updater**: bump to 0.1.1, tag, publish, and check the update banner appears in 0.1.0.
-3. **Ghostscript on Windows**: PDF/AI/EPS previews need it, and the installer doesn't bundle or install it (the .deb recommends it). Bundle it (AGPL, ship its license and a source offer) or tell the user in the inspector.
-4. **Moving and copying files** (milestone 3) — **through Squeue**, not built here. See below.
-5. Tags, ratings, collections, XMP sidecars (milestone 4).
-6. RAW previews (milestone 6), AI search by description (milestone 7).
+2. **Test the updater** with v0.2.0: publish the draft and check the update banner appears in 0.1.0.
+3. **Moving and copying files** (milestone 3) — **through Squeue**, not built here. See below.
+4. Tags, ratings, albums, XMP sidecars (milestone 4).
+5. RAW previews (milestone 6), AI search by description (milestone 7).
 
 Smaller follow-ups: remember Pause across restarts; let the catalog be moved to another drive from Settings; video hover-scrub previews.
 

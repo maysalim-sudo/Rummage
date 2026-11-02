@@ -19,9 +19,11 @@ Built with Tauri 2 (Rust core) and Svelte 5. The full architecture and roadmap a
   taken, GPS) and ffprobe video details (duration, codec, fps), plus a 384 px JPEG
   thumbnail per file. One worker per physical disk; pausable.
 - SQLite catalog with full-text search on file and folder names.
-- UI: grid view with adjustable thumbnail size and a list view (both virtualized,
-  keyboard navigable), filters (type, resolution, orientation, camera, video length,
-  date range), and an inspector with a full-size preview and all details.
+- UI: a photo-first library with a justified grid grouped by month, a timeline to jump
+  through the years, and a list view (both virtualized, keyboard navigable). Search with
+  removable filter tags (type, resolution, orientation, camera, video length, date range),
+  a drive strip, a folder panel, multi-select with Compare and Find similar, and a
+  full-screen viewer with a filmstrip and all details.
 
 - HEIC, AVIF, PSD, SVG, TGA, EXR and design files (AI, EPS, PDF, Figma `.fig`) get
   thumbnails and large previews through ImageMagick (Figma: the thumbnail inside the file).
@@ -32,7 +34,8 @@ Built with Tauri 2 (Rust core) and Svelte 5. The full architecture and roadmap a
 Not yet: RAW thumbnails (milestone 6) and video hover-scrub previews (poster frames only).
 
 Runtime tools: `ffmpeg`/`ffprobe` and ImageMagick 7 (`magick`, with Ghostscript for AI/EPS/PDF)
-must be on the PATH for now; installers will bundle them (milestone 8).
+must be on the PATH in development. The Windows installer bundles all of them; the Linux
+packages bundle ffmpeg and ImageMagick, and the `.deb` recommends Ghostscript.
 
 ## Development
 
@@ -70,3 +73,6 @@ Rummage is released under the [MIT License](LICENSE).
 
 Release builds bundle third-party tools under their own licenses: ffmpeg/ffprobe
 (GPL builds; license texts in `tools/licenses`) and ImageMagick (ImageMagick License).
+The Windows installer also bundles Ghostscript, an unmodified separate program under the
+AGPL 3.0, with its license and a link to its source in `tools\licenses`, and Microsoft's
+Visual C++ runtime DLLs, which Ghostscript needs.

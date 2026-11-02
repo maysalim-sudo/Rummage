@@ -7,8 +7,8 @@ ship the first release, `v0.1.0`.
 
 > **Update 2026-11-01:** steps 1, 2 and 4.1–4.6 below are done. The Windows app was tested on
 > Windows, and [v0.1.0](https://github.com/maysalim-sudo/Rummage/releases/tag/v0.1.0) is
-> published with the landing page live at https://maysalim-sudo.github.io/Rummage/. Still open:
-> testing the updater (4.7), Ghostscript on Windows (3) and the CI cleanup (5).
+> published with the landing page live at https://maysalim-sudo.github.io/Rummage/. Step 3 ships
+> with 0.2.0. Still open: testing the updater (4.7) and the CI cleanup (5).
 > Current state: [STATUS.md](STATUS.md).
 
 ## Working with the user
@@ -155,13 +155,9 @@ folder. Only try opening the Linux catalog after backing up `catalog.sqlite` and
    `7z` if installed, else Windows' built-in `tar`. Then make a local release build and install it.
    Check that the installed app uses the bundled `tools\` copies, for example with
    Process Explorer, or by temporarily removing ffmpeg and magick from the PATH.
-3. **Ghostscript on Windows.** PDF, Illustrator (.ai) and EPS previews need Ghostscript, which
-   the installer doesn't include. Choose with the user:
-   - **(a)** show a clear message in the inspector ("Install Ghostscript to preview PDF/AI/EPS files", with a link);
-   - **(b)** bundle it. Ghostscript is AGPL, so bundling it next to an MIT app is allowed as a separate
-     program, but its license and a source offer must ship with it. Ask the user before bundling.
-   - Either way, ImageMagick must find it: it looks for `gswin64c.exe`, and the `MAGICK_GHOSTSCRIPT_PATH`
-     environment variable can point it at a bundled copy.
+3. **Ghostscript on Windows: done.** The user chose to bundle it. `gswin64c.exe`, `gsdll64.dll` and the
+   Visual C++ runtime DLLs sit next to `magick.exe`, where ImageMagick finds them, and its license
+   and source link are in `tools\licenses`.
 4. **First release** (each step needs the user's go-ahead):
    1. Push the local commits on `main`. CI must be green.
    2. In GitHub → Settings → Secrets and variables → Actions, add `TAURI_SIGNING_PRIVATE_KEY` (contents of the
