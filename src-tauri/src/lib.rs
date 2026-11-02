@@ -560,6 +560,32 @@ fn query_files(state: State<AppState>, query: query::FileQuery, offset: i64, lim
     Ok(page)
 }
 
+/// Sent as raw bytes: JSON would be far larger and slower for hundreds of thousands of files.
+#[tauri::command]
+fn file_layout(state: State<AppState>, query: query::FileQuery) -> CmdResult<tauri::ipc::Response> {
+    let guard = state.catalog()?;
+    let bytes = query::layout(&guard.as_ref().unwrap().conn, &query).map_err(err)?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+#[tauri::command]
+fn file_ids(state: State<AppState>, query: query::FileQuery, offset: i64, limit: i64) -> CmdResult<Vec<i64>> {
+    let guard = state.catalog()?;
+    query::ids(&guard.as_ref().unwrap().conn, &query, offset, limit.clamp(1, 5000)).map_err(err)
+}
+
+#[tauri::command]
+fn similar_files(state: State<AppState>, id: i64) -> CmdResult<Vec<i64>> {
+    let guard = state.catalog()?;
+    query::similar(&guard.as_ref().unwrap().conn, id, 500).map_err(err)
+}
+
+#[tauri::command]
+fn file_copies(state: State<AppState>, id: i64) -> CmdResult<Vec<query::FileCopy>> {
+    let guard = state.catalog()?;
+    query::copies(&guard.as_ref().unwrap().conn, id).map_err(err)
+}
+
 fn fill_abs_path(mounts: &HashMap<i64, Mounted>, row: &mut query::FileRow) {
     if let Some(m) = mounts.get(&row.volume_id) {
         row.abs_path = Some(paths::from_rel(&m.path, &row.rel_path).to_string_lossy().to_string());
@@ -771,6 +797,10 @@ pub fn run() {
             jobs_status,
             set_jobs_paused,
             query_files,
+            file_layout,
+            file_ids,
+            similar_files,
+            file_copies,
             file_details,
             list_folders,
             list_cameras,

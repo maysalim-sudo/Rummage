@@ -136,6 +136,12 @@ CREATE TABLE similar_members (
     file_id   INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
     PRIMARY KEY (group_id, file_id)
 );
+"#, r#"
+-- Windows installers now include Ghostscript; redo files that failed without it.
+UPDATE files SET processed_scan = 0 WHERE thumb_ok = 0 AND process_error LIKE '%gswin64c%';
+"#, r#"
+-- "Find similar" compares every fingerprint; this keeps it from reading whole rows.
+CREATE INDEX files_phash ON files(phash, missing) WHERE phash IS NOT NULL;
 "#];
 
 /// Opens (creating if needed) the catalog in `dir` and brings its schema up to date.
@@ -183,5 +189,31 @@ mod tests {
         let conn = open(dir.path()).unwrap();
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
         assert_eq!(version as usize, MIGRATIONS.len());
+    }
+
+    #[test]
+    fn retries_files_that_needed_ghostscript() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = open(dir.path()).unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = OFF").unwrap();
+        for (id, error) in [(1, "magick.exe: FailedToExecuteCommand `\"gswin64c.exe\" -q"), (2, "corrupt file")] {
+            conn.execute(
+                "INSERT INTO files (id, volume_id, rel_path, dir, name, ext, kind, size, mtime, first_scan,
+                                    changed_scan, seen_scan, processed_scan, process_error)
+                 VALUES (?1, 1, ?1, '', 'a.pdf', 'pdf', 0, 1, 1, 1, 1, 1, 1, ?2)",
+                rusqlite::params![id, error],
+            )
+            .unwrap();
+        }
+        conn.pragma_update(None, "user_version", 6 - 1).unwrap();
+        conn.execute_batch("DROP INDEX files_phash").unwrap();
+        drop(conn);
+
+        let conn = open(dir.path()).unwrap();
+        let processed = |id: i64| -> i64 {
+            conn.query_row("SELECT processed_scan FROM files WHERE id = ?1", [id], |r| r.get(0)).unwrap()
+        };
+        assert_eq!(processed(1), 0);
+        assert_eq!(processed(2), 1);
     }
 }

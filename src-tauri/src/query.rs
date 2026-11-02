@@ -51,6 +51,8 @@ pub struct FileQuery {
     pub folder: Option<String>,
     /// Only files directly in `folder`, not in its subfolders.
     pub direct_only: bool,
+    /// Only these files, e.g. the results of "find similar".
+    pub ids: Option<Vec<i64>>,
 }
 
 /// One subfolder in the folder tree.
@@ -86,6 +88,8 @@ pub struct FileRow {
     pub camera: Option<String>,
     /// Thumbnail version for cache-busting URLs; None when there is no thumbnail.
     pub thumb: Option<i64>,
+    /// False while the file waits for its details and thumbnail.
+    pub processed: bool,
     /// Absolute path when the drive is plugged in; filled in by the command layer.
     pub abs_path: Option<String>,
 }
@@ -106,7 +110,6 @@ pub struct FileDetails {
     pub gps_lon: Option<f64>,
     pub codec: Option<String>,
     pub fps: Option<f64>,
-    pub processed: bool,
     pub process_error: Option<String>,
 }
 
@@ -116,8 +119,18 @@ pub struct CameraCount {
     pub count: i64,
 }
 
+/// Another catalogued file with exactly the same content.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileCopy {
+    pub volume_id: i64,
+    pub dir: String,
+    pub name: String,
+}
+
 pub(crate) const ROW_COLUMNS: &str = "id, volume_id, rel_path, dir, name, ext, kind, size, mtime, missing,
-    width, height, sort_date, duration_ms, camera, CASE WHEN thumb_ok THEN processed_scan END";
+    width, height, sort_date, duration_ms, camera, CASE WHEN thumb_ok THEN processed_scan END,
+    processed_scan >= changed_scan";
 
 pub(crate) fn map_row(r: &rusqlite::Row) -> rusqlite::Result<FileRow> {
     Ok(FileRow {
@@ -137,6 +150,7 @@ pub(crate) fn map_row(r: &rusqlite::Row) -> rusqlite::Result<FileRow> {
         duration_ms: r.get(13)?,
         camera: r.get(14)?,
         thumb: r.get(15)?,
+        processed: r.get(16)?,
         abs_path: None,
     })
 }
@@ -222,6 +236,10 @@ fn filter_sql(q: &FileQuery) -> (String, Vec<Value>) {
     if let Some(sql) = ranges_sql("duration_ms", &q.duration_ranges, &mut args) {
         conditions.push(sql);
     }
+    if let Some(ids) = &q.ids {
+        conditions.push(in_list("id", ids.len()));
+        args.extend(ids.iter().map(|&id| Value::from(id)));
+    }
 
     let where_sql = if conditions.is_empty() {
         String::new()
@@ -262,14 +280,18 @@ fn ranges_sql(expr: &str, ranges: &[Range], args: &mut Vec<Value>) -> Option<Str
     Some(format!("({})", any.join(" OR ")))
 }
 
-pub fn query(conn: &Connection, q: &FileQuery, offset: i64, limit: i64) -> Result<Page> {
-    let (where_sql, args) = filter_sql(q);
-    let order_sql = match q.sort {
+fn order_sql(sort: Sort) -> &'static str {
+    match sort {
         Sort::Newest => "sort_date DESC, id DESC",
         Sort::Oldest => "sort_date ASC, id ASC",
         Sort::Name => "name COLLATE NOCASE ASC, id ASC",
         Sort::Largest => "size DESC, id DESC",
-    };
+    }
+}
+
+pub fn query(conn: &Connection, q: &FileQuery, offset: i64, limit: i64) -> Result<Page> {
+    let (where_sql, args) = filter_sql(q);
+    let order_sql = order_sql(q.sort);
 
     let total: i64 = conn.query_row(
         &format!("SELECT COUNT(*) FROM files {where_sql}"),
@@ -290,28 +312,108 @@ pub fn query(conn: &Connection, q: &FileQuery, offset: i64, limit: i64) -> Resul
     Ok(Page { total, rows })
 }
 
+/// The date and shape of every matching file, in result order, for laying out the photo
+/// grid without loading the rows: 8 bytes per file, an i32 date and an f32 width/height
+/// ratio (0 when unknown yet), both little-endian.
+pub fn layout(conn: &Connection, q: &FileQuery) -> Result<Vec<u8>> {
+    let (where_sql, args) = filter_sql(q);
+    let mut stmt = conn.prepare(&format!(
+        "SELECT sort_date, width, height FROM files {where_sql} ORDER BY {}",
+        order_sql(q.sort)
+    ))?;
+    let mut rows = stmt.query(params_from_iter(args.iter()))?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next()? {
+        let date: i64 = row.get(0)?;
+        let width: Option<i64> = row.get(1)?;
+        let height: Option<i64> = row.get(2)?;
+        let ratio = match (width, height) {
+            (Some(w), Some(h)) if w > 0 && h > 0 => w as f32 / h as f32,
+            _ => 0.0,
+        };
+        out.extend_from_slice(&(date.clamp(i32::MIN.into(), i32::MAX.into()) as i32).to_le_bytes());
+        out.extend_from_slice(&ratio.to_le_bytes());
+    }
+    Ok(out)
+}
+
+/// The ids of the matching files at result positions `offset..offset + limit`.
+pub fn ids(conn: &Connection, q: &FileQuery, offset: i64, limit: i64) -> Result<Vec<i64>> {
+    let (where_sql, mut args) = filter_sql(q);
+    args.push(limit.into());
+    args.push(offset.into());
+    let mut stmt = conn.prepare(&format!(
+        "SELECT id FROM files {where_sql} ORDER BY {} LIMIT ? OFFSET ?",
+        order_sql(q.sort)
+    ))?;
+    let list = stmt.query_map(params_from_iter(args.iter()), |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+    Ok(list)
+}
+
+/// Fingerprint distance up to which two pictures count as similar to look at. Looser than
+/// the duplicate finder's: this shows a person pictures, it doesn't offer to delete them.
+const SIMILAR_DISTANCE: u32 = 10;
+
+/// Files that look like `id`, closest first, starting with `id` itself.
+pub fn similar(conn: &Connection, id: i64, limit: usize) -> Result<Vec<i64>> {
+    let target: Option<i64> = conn.query_row("SELECT phash FROM files WHERE id = ?1", [id], |r| r.get(0))?;
+    let Some(target) = target else {
+        return Ok(vec![id]);
+    };
+    let mut stmt = conn.prepare("SELECT id, phash FROM files WHERE missing = 0 AND phash IS NOT NULL")?;
+    let mut found: Vec<(u32, i64)> = stmt
+        .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?
+        .filter_map(|row| match row {
+            Ok((file, hash)) if file != id => {
+                let distance = (hash ^ target).count_ones();
+                (distance <= SIMILAR_DISTANCE).then_some(Ok((distance, file)))
+            }
+            Ok(_) => None,
+            Err(e) => Some(Err(e)),
+        })
+        .collect::<rusqlite::Result<_>>()?;
+    found.sort_unstable();
+    found.truncate(limit.saturating_sub(1));
+    Ok(std::iter::once(id).chain(found.into_iter().map(|(_, file)| file)).collect())
+}
+
+/// Other files known to have the same content as `id`. Known only after the duplicate
+/// finder has hashed the file.
+pub fn copies(conn: &Connection, id: i64) -> Result<Vec<FileCopy>> {
+    let mut stmt = conn.prepare(
+        "SELECT f.volume_id, f.dir, f.name FROM files me
+         JOIN files f ON f.full_hash = me.full_hash AND f.id <> me.id
+         WHERE me.id = ?1 AND me.full_hash IS NOT NULL AND f.full_hash IS NOT NULL
+           AND me.hash_scan = me.changed_scan AND f.hash_scan = f.changed_scan AND f.missing = 0
+         ORDER BY f.volume_id, f.dir, f.name LIMIT 20",
+    )?;
+    let list = stmt
+        .query_map([id], |r| Ok(FileCopy { volume_id: r.get(0)?, dir: r.get(1)?, name: r.get(2)? }))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(list)
+}
+
 pub fn details(conn: &Connection, id: i64) -> Result<FileDetails> {
     Ok(conn.query_row(
         &format!(
             "SELECT {ROW_COLUMNS}, taken_at, lens, iso, f_number, exposure, focal_mm, gps_lat, gps_lon,
-                    codec, fps, processed_scan >= changed_scan, process_error
+                    codec, fps, process_error
              FROM files WHERE id = ?1"
         ),
         [id],
         |r| {
             Ok(FileDetails {
                 row: map_row(r)?,
-                taken_at: r.get(16)?,
-                lens: r.get(17)?,
-                iso: r.get(18)?,
-                f_number: r.get(19)?,
-                exposure: r.get(20)?,
-                focal_mm: r.get(21)?,
-                gps_lat: r.get(22)?,
-                gps_lon: r.get(23)?,
-                codec: r.get(24)?,
-                fps: r.get(25)?,
-                processed: r.get(26)?,
+                taken_at: r.get(17)?,
+                lens: r.get(18)?,
+                iso: r.get(19)?,
+                f_number: r.get(20)?,
+                exposure: r.get(21)?,
+                focal_mm: r.get(22)?,
+                gps_lat: r.get(23)?,
+                gps_lon: r.get(24)?,
+                codec: r.get(25)?,
+                fps: r.get(26)?,
                 process_error: r.get(27)?,
             })
         },
@@ -415,6 +517,64 @@ mod tests {
     }
 
     #[test]
+    fn layout_follows_the_result_order() {
+        let (_d, conn) = catalog();
+        conn.execute("UPDATE files SET width = 300, height = 200 WHERE name = 'beach.mp4'", []).unwrap();
+        let bytes = layout(&conn, &FileQuery::default()).unwrap();
+        assert_eq!(bytes.len(), 3 * 8);
+        let date = |i: usize| i32::from_le_bytes(bytes[i * 8..i * 8 + 4].try_into().unwrap());
+        let ratio = |i: usize| f32::from_le_bytes(bytes[i * 8 + 4..i * 8 + 8].try_into().unwrap());
+        assert_eq!((date(0), date(1), date(2)), (30, 20, 10));
+        assert_eq!(ratio(0), 0.0); // not processed yet
+        assert_eq!(ratio(1), 1.5);
+    }
+
+    #[test]
+    fn ids_filter_and_paging() {
+        let (_d, conn) = catalog();
+        let all = ids(&conn, &FileQuery::default(), 0, 50).unwrap();
+        assert_eq!(all.len(), 3);
+        assert_eq!(ids(&conn, &FileQuery::default(), 1, 1).unwrap(), &all[1..2]);
+
+        let picked = FileQuery { ids: Some(vec![all[2]]), ..Default::default() };
+        assert_eq!(query(&conn, &picked, 0, 50).unwrap().total, 1);
+        let none = FileQuery { ids: Some(vec![]), ..Default::default() };
+        assert_eq!(query(&conn, &none, 0, 50).unwrap().total, 0);
+    }
+
+    #[test]
+    fn similar_is_closest_first_and_starts_with_the_file() {
+        let (_d, conn) = catalog();
+        let all = ids(&conn, &FileQuery::default(), 0, 50).unwrap();
+        let set = |id: i64, hash: i64| {
+            conn.execute("UPDATE files SET phash = ?2 WHERE id = ?1", [id, hash]).unwrap();
+        };
+        set(all[0], 0b1111);
+        set(all[1], 0b1101); // 1 bit away
+        set(all[2], !0b1111); // nothing alike
+        assert_eq!(similar(&conn, all[0], 10).unwrap(), vec![all[0], all[1]]);
+        assert_eq!(similar(&conn, all[0], 1).unwrap(), vec![all[0]]);
+    }
+
+    #[test]
+    fn copies_need_a_current_hash_and_skip_missing_files() {
+        let (_d, conn) = catalog();
+        conn.execute_batch(
+            "UPDATE files SET full_hash = 'h', hash_scan = changed_scan;
+             UPDATE files SET full_hash = 'other' WHERE name = 'beach.mp4';",
+        )
+        .unwrap();
+        let id = |name: &str| -> i64 {
+            conn.query_row("SELECT id FROM files WHERE name = ?1", [name], |r| r.get(0)).unwrap()
+        };
+        let found = copies(&conn, id("beach_sunset.jpg")).unwrap();
+        assert_eq!(found, vec![FileCopy { volume_id: 2, dir: "raw".into(), name: "DSC_0001.NEF".into() }]);
+
+        conn.execute("UPDATE files SET hash_scan = 0 WHERE name = 'DSC_0001.NEF'", []).unwrap();
+        assert!(copies(&conn, id("beach_sunset.jpg")).unwrap().is_empty());
+    }
+
+    #[test]
     fn text_search_matches_prefixes_and_folders() {
         let (_d, conn) = catalog();
         let search = |text: &str| {
@@ -503,6 +663,6 @@ mod tests {
         let id = oldest.rows[0].id;
         let d = details(&conn, id).unwrap();
         assert_eq!(d.taken_at, Some(5));
-        assert!(!d.processed);
+        assert!(!d.row.processed);
     }
 }

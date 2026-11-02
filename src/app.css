@@ -1,6 +1,7 @@
 :root {
   --bg: #eff0f1;
   --panel: #fcfcfc;
+  --raised: #e3e5e7;
   --sidebar: #e3e5e7;
   --border: #d1d5d9;
   --text: #232629;
@@ -10,6 +11,7 @@
   --row-hover: #e8f4fb;
   --row-selected: #cde8f7;
   --danger: #da4453;
+  --warning: #e6a23c;
   --badge-image: #27ae60;
   --badge-video: #8e44ad;
   --badge-raw: #e67e22;
@@ -19,14 +21,15 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #202326;
-    --panel: #292c30;
-    --sidebar: #1b1e20;
-    --border: #3b4045;
-    --text: #fcfcfc;
-    --muted: #a1a9b1;
-    --row-hover: #2e3a43;
-    --row-selected: #1d4f6b;
+    --bg: #0e1012;
+    --panel: #171a1d;
+    --raised: #20242a;
+    --sidebar: #171a1d;
+    --border: #2b3036;
+    --text: #f2f3f4;
+    --muted: #8d96a0;
+    --row-hover: #20242a;
+    --row-selected: #16384a;
     color-scheme: dark;
   }
 }
@@ -43,7 +46,7 @@ body,
 }
 
 body {
-  font-family: "Noto Sans", "Segoe UI", system-ui, sans-serif;
+  font-family: Inter, "Noto Sans", "Segoe UI", system-ui, sans-serif;
   font-size: 13px;
   background: var(--bg);
   color: var(--text);

@@ -1,4 +1,4 @@
-// Typed wrappers around the Rust commands in src-tauri/src/lib.rs.
+﻿// Typed wrappers around the Rust commands in src-tauri/src/lib.rs.
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
@@ -73,6 +73,8 @@ export interface FileQuery {
   folder?: string | null;
   /** Only files directly in `folder`, not its subfolders. */
   directOnly?: boolean;
+  /** Only these files, e.g. the results of "find similar". */
+  ids?: number[] | null;
 }
 
 export interface Folder {
@@ -102,6 +104,8 @@ export interface FileRow {
   camera: string | null;
   /** Thumbnail version; null when there is no thumbnail (yet). */
   thumb: number | null;
+  /** False while the file waits for its details and thumbnail. */
+  processed: boolean;
   absPath: string | null;
 }
 
@@ -116,8 +120,14 @@ export interface FileDetails extends FileRow {
   gpsLon: number | null;
   codec: string | null;
   fps: number | null;
-  processed: boolean;
   processError: string | null;
+}
+
+/** Another catalogued file with exactly the same content. */
+export interface FileCopy {
+  volumeId: number;
+  dir: string;
+  name: string;
 }
 
 export interface CameraCount {
@@ -158,6 +168,13 @@ export const api = {
   setJobsPaused: (paused: boolean) => invoke<void>("set_jobs_paused", { paused }),
   queryFiles: (query: FileQuery, offset: number, limit: number) =>
     invoke<Page>("query_files", { query, offset, limit }),
+  /** Date and shape of every matching file, packed; see `parseLayout`. */
+  fileLayout: (query: FileQuery) => invoke<ArrayBuffer>("file_layout", { query }),
+  fileIds: (query: FileQuery, offset: number, limit: number) =>
+    invoke<number[]>("file_ids", { query, offset, limit }),
+  similarFiles: (id: number) => invoke<number[]>("similar_files", { id }),
+  /** Known only for files the duplicate finder has hashed. */
+  fileCopies: (id: number) => invoke<FileCopy[]>("file_copies", { id }),
   fileDetails: (id: number) => invoke<FileDetails>("file_details", { id }),
   listFolders: (volumeId: number, parent: string, includeMissing: boolean) =>
     invoke<Folder[]>("list_folders", { volumeId, parent, includeMissing }),
